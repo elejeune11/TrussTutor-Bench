@@ -1,0 +1,26 @@
+[project]
+name = "trusstutor_bench"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "elejeune11", email = "52667645+elejeune11@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "google-generativeai>=0.8.6",
+    "jsonschema>=4.26.0",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.6",
+    "sympy>=1.14.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]

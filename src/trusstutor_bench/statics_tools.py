@@ -481,6 +481,7 @@ def solve_method_of_sections_tool(state, cut_element_ids):
     
     return True
 
+
 def autonomous_moj_macro(state, include_collinear_load_rule=False):
     """
     Orchestrates the complete Method of Joints process.

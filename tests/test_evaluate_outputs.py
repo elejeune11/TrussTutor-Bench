@@ -326,30 +326,40 @@ def test_evaluate_outputs_minimal_real_examples(tmp_path):
 def test_evaluate_formative_task():
     """
     Validates that the formative task evaluator correctly grades the LLM's 
-    is_work_correct prediction against the expected reality.
+    prediction of both correctness and error step localization against ground truth.
     """
+    # Define Ground Truth states
+    gt_flawless = {"is_work_correct": True, "error_step_number": None}
+    gt_flawed = {"is_work_correct": False, "error_step_number": 2}
+
     # 1. Test True Positive (Model correctly identifies flawless work)
-    pred_true = {"is_work_correct": True, "error_step_number": None}
-    res_true = evaluate_formative_task(pred_true, is_student_work_flawless=True)
-    assert res_true["passed"] is True
+    pred_flawless = {"is_work_correct": True, "error_step_number": None}
+    res_tp = evaluate_formative_task(pred_flawless, gt_flawless)
+    assert res_tp["passed"] is True
     
     # 2. Test False Negative (Model hallucinated an error in flawless work)
-    pred_false_neg = {"is_work_correct": False, "error_step_number": 2}
-    res_false_neg = evaluate_formative_task(pred_false_neg, is_student_work_flawless=True)
-    assert res_false_neg["passed"] is False
+    pred_hallucinated_error = {"is_work_correct": False, "error_step_number": 2}
+    res_fn = evaluate_formative_task(pred_hallucinated_error, gt_flawless)
+    assert res_fn["passed"] is False
 
-    # 3. Test True Negative (Model correctly identifies flawed work)
-    res_true_neg = evaluate_formative_task(pred_false_neg, is_student_work_flawless=False)
-    assert res_true_neg["passed"] is True
+    # 3. Test True Negative (Model correctly identifies flawed work AND exact step)
+    pred_correct_detection = {"is_work_correct": False, "error_step_number": 2}
+    res_tn = evaluate_formative_task(pred_correct_detection, gt_flawed)
+    assert res_tn["passed"] is True
 
     # 4. Test False Positive (Model rubber-stamped flawed work)
-    res_false_pos = evaluate_formative_task(pred_true, is_student_work_flawless=False)
-    assert res_false_pos["passed"] is False
+    res_fp = evaluate_formative_task(pred_flawless, gt_flawed)
+    assert res_fp["passed"] is False
+    
+    # 5. Test Localization Failure (Model knows it's flawed, but picks the wrong step)
+    pred_wrong_step = {"is_work_correct": False, "error_step_number": 3}
+    res_loc_fail = evaluate_formative_task(pred_wrong_step, gt_flawed)
+    assert res_loc_fail["passed"] is False
 
 
 def test_evaluate_outputs_formative_integration(tmp_path):
     """
-    Tests the formative orchestrator using mock directories and responses.
+    Tests the formative orchestrator using mock directories, payloads, and responses.
     """
     # 1. Setup mock directories
     prompts_dir = tmp_path / "prompts_formative"
@@ -358,23 +368,37 @@ def test_evaluate_outputs_formative_integration(tmp_path):
     outputs_dir.mkdir()
     report_path = tmp_path / "formative_evaluation_report.json"
     
-    # 2. Create a mock LLM prediction
+    benchmark_id = "TRUSS_0001"
+    
+    # 2. Create a mock payload (Required so the evaluator can read posture & ground truth)
+    mock_payload = {
+        "benchmark_id": benchmark_id,
+        "posture_type": "posture_1",
+        "ground_truth": {
+            "is_work_correct": True,
+            "error_step_number": None
+        }
+    }
+    with open(prompts_dir / f"{benchmark_id}_payload.json", "w", encoding="utf-8") as f:
+        json.dump(mock_payload, f)
+        
+    # 3. Create a mock LLM prediction (Response)
     mock_prediction = {
         "is_work_correct": True,
         "error_step_number": None,
         "explanation_to_student": "Great job!"
     }
-    with open(outputs_dir / "TRUSS_0001_formative_posture_1_response.json", "w", encoding="utf-8") as f:
+    with open(outputs_dir / f"{benchmark_id}_response.json", "w", encoding="utf-8") as f:
         json.dump(mock_prediction, f)
         
-    # 3. Execute the orchestrator
-    results = evaluate_outputs_formative(prompts_dir, outputs_dir, report_path)
+    # 4. Execute the orchestrator (targeting posture_1)
+    results = evaluate_outputs_formative(prompts_dir, outputs_dir, "posture_1", report_path)
     
-    # 4. Assert the return object contains the graded task
-    assert "TRUSS_0001_formative_posture_1" in results
-    assert results["TRUSS_0001_formative_posture_1"]["passed"] is True
+    # 5. Assert the return object contains the graded task
+    assert benchmark_id in results
+    assert results[benchmark_id]["passed"] is True
     
-    # 5. Assert the report was generated
+    # 6. Assert the report was generated and calculated correctly
     assert report_path.exists()
     
     with open(report_path, "r", encoding="utf-8") as f:

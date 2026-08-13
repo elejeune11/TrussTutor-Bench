@@ -20,6 +20,11 @@ from trusstutor_bench.draw_FBDs import (
 from trusstutor_bench.markdown_generator import render_trace_step
 from trusstutor_bench.task_loader import TaskLoader
 
+from trusstutor_bench.corrupted_statics_tools import (
+    corrupted_solve_global_reactions_tool,
+    corrupted_autonomous_moj_macro,
+    corrupted_solve_method_of_sections_tool
+)
 
 def get_formative_schema() -> dict:
     """
@@ -53,6 +58,8 @@ def get_student_posture(posture_type: str) -> str:
     """
     postures = {
         "posture_1": "I am getting the wrong answer according to my professor and the homework answer key. Where did I make a mistake in my work?",
+        "posture_2": "Is my work correct?",
+        "posture_3": "Can you find the mistake in my work?"
     }
     
     if posture_type not in postures:
@@ -206,16 +213,46 @@ def compile_formative_payload(task: BenchmarkTask, figs_dir: Path, output_dir: P
     
     # 4. Programmatically execute the solver recipe to generate the TrussState
     state = None
+    error_injected = False
+    injected_step_number = None
+    
     for step_id, step_data in sorted(task.solution_recipe.items()):
+        func = step_data["function"]
+        is_corrupted_tool = False
+        
+        # --- Tool Swapping based on Posture ---
+        if posture_type == "posture_2":
+            if func.__name__ == "solve_global_reactions_tool":
+                func = corrupted_solve_global_reactions_tool
+                is_corrupted_tool = True
+            elif func.__name__ == "autonomous_moj_macro":
+                func = corrupted_autonomous_moj_macro
+                is_corrupted_tool = True
+        
+        elif posture_type == "posture_3":
+            if func.__name__ == "solve_method_of_sections_tool":
+                func = corrupted_solve_method_of_sections_tool
+                is_corrupted_tool = True
+        # -----------------------------------
+
         if step_id == 1:
-            state = step_data["function"](sampled_vars=sampled_vars, **step_data.get("inputs", {}))
+            state = func(sampled_vars=sampled_vars, **step_data.get("inputs", {}))
         else:
-            step_data["function"](state, **step_data.get("inputs", {}))
+            # Capture how many steps the "student" has written down BEFORE this tool runs
+            pre_trace_len = len(state.trace)
             
-    # --- NEW: Robust Drawing Substitutions ---
-    # FBD rendering requires numeric coordinates. We merge sampled_vars with 
-    # any dedicated drawing variables. If a geometric symbol (like 'L') is still 
-    # missing, we dynamically assign it a fallback scale of 1.0 to prevent evalf() crashes.
+            # Execute the tool
+            func(state, **step_data.get("inputs", {}))
+            
+            # --- Trace-Based Error Tracking ---
+            # If this was the first corrupted tool to run, the error appears in the 
+            # very next step added to the trace. We use 1-based indexing for the LLM.
+            if is_corrupted_tool and not error_injected:
+                injected_step_number = pre_trace_len + 1
+                error_injected = True
+            # ---------------------------------------
+            
+    # --- Robust Drawing Substitutions ---
     drawing_subs = sampled_vars.copy()
     
     if hasattr(task, 'drawing_variables'):
@@ -238,12 +275,22 @@ def compile_formative_payload(task: BenchmarkTask, figs_dir: Path, output_dir: P
     student_blocks = generate_formative_blocks(
         task=task,
         state=state,
-        subs_dict=drawing_subs,  # <-- Use the safe dictionary
+        subs_dict=drawing_subs,  
         output_dir=fbd_temp_dir
     )
     
     # 6. Retrieve the strict JSON evaluation schema
     structured_schema = get_formative_schema()
+    
+    # --- Dynamic Ground Truth Logic ---
+    # The work is correct if no error was successfully injected
+    is_work_correct = not error_injected
+    
+    ground_truth = {
+        "is_work_correct": is_work_correct,
+        "error_step_number": injected_step_number if not is_work_correct else None
+    }
+    # ---------------------------------------
     
     # 7. Assemble the final payload
     payload = {
@@ -253,7 +300,8 @@ def compile_formative_payload(task: BenchmarkTask, figs_dir: Path, output_dir: P
         "base_image_base64": base_image_base64,
         "student_work": student_blocks,
         "structured_schema": structured_schema,
-        "ground_truth_variables": sampled_vars
+        "ground_truth_variables": sampled_vars,
+        "ground_truth": ground_truth
     }
     
     return payload

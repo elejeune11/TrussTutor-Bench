@@ -44,5 +44,9 @@
     "ground_truth_variables": {
         "P1": 300.0,
         "P2": 600.0
+    },
+    "ground_truth": {
+        "is_work_correct": true,
+        "error_step_number": null
     }
 }

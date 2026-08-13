@@ -50,17 +50,28 @@ def test_get_student_posture():
     import pytest
     from trusstutor_bench.task_to_prompt_formative import get_student_posture
 
-    # 1. Test valid posture retrieval
-    expected_text = "I am getting the wrong answer according to my professor and the homework answer key. Where did I make a mistake in my work?"
-    assert get_student_posture("posture_1") == expected_text
+    # 1. Test valid posture_1 retrieval
+    expected_text_1 = "I am getting the wrong answer according to my professor and the homework answer key. Where did I make a mistake in my work?"
+    assert get_student_posture("posture_1") == expected_text_1
 
-    # 2. Test invalid posture exception handling
+    # 2. Test valid posture_2 retrieval
+    expected_text_2 = "Is my work correct?"
+    assert get_student_posture("posture_2") == expected_text_2
+
+    # 3. Test valid posture_3 retrieval
+    expected_text_3 = "Can you find the mistake in my work?"
+    assert get_student_posture("posture_3") == expected_text_3
+
+    # 4. Test invalid posture exception handling
     with pytest.raises(ValueError) as excinfo:
         get_student_posture("invalid_posture")
         
     # Verify the error message contains the expected string format
-    assert "Unknown posture_type: invalid_posture" in str(excinfo.value)
-    assert "['posture_1']" in str(excinfo.value)
+    error_msg = str(excinfo.value)
+    assert "Unknown posture_type: invalid_posture" in error_msg
+    assert "'posture_1'" in error_msg
+    assert "'posture_2'" in error_msg
+    assert "'posture_3'" in error_msg
 
 
 def test_generate_formative_blocks_real_example(tmp_path):
@@ -358,6 +369,107 @@ def test_task_to_prompt_formative_single(tmp_path):
     assert "student_work" in data
 
 
+def test_compile_formative_payload_postures(tmp_path):
+    """
+    Verifies that compile_formative_payload dynamically swaps solver tools 
+    and updates the ground truth block based on the selected posture type.
+    """
+    # 1. Dynamically load a real template (e.g., TRUSS_0001)
+    current_dir = Path(__file__).parent
+    examples_dir = current_dir / "examples"
+    example_path = examples_dir / "example_TRUSS_0001.py"
+    
+    if not example_path.exists():
+        pytest.skip("example_TRUSS_0001.py not found in examples directory.")
+
+    spec = importlib.util.spec_from_file_location("example_TRUSS_0001", example_path)
+    truss_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(truss_module)
+    task = BenchmarkTask.from_module(truss_module)
+
+    # 2. Setup mock directories and a dummy image for the encoder
+    figs_dir = tmp_path / "figs"
+    figs_dir.mkdir()
+    output_dir = tmp_path / "output"
+    
+    tiny_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    dummy_image_path = figs_dir / f"{task.benchmark_id}.png"
+    dummy_image_path.write_bytes(tiny_png)
+
+    # 3. Test Posture 1 (Flawless Execution)
+    payload_p1 = compile_formative_payload(
+        task=task,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_1"
+    )
+    
+    assert payload_p1["posture_type"] == "posture_1"
+    assert "ground_truth" in payload_p1
+    assert payload_p1["ground_truth"]["is_work_correct"] is True
+    assert payload_p1["ground_truth"]["error_step_number"] is None
+
+    # 4. Test Posture 2 (Flawed Execution via Corrupted Tools)
+    payload_p2 = compile_formative_payload(
+        task=task,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_2"
+    )
+    
+    assert payload_p2["posture_type"] == "posture_2"
+    assert "ground_truth" in payload_p2
+    assert payload_p2["ground_truth"]["is_work_correct"] is False
+    assert payload_p2["ground_truth"]["error_step_number"] == 1
+    
+    # 5. Verify the prompts mapped correctly
+    assert "Where did I make a mistake" in payload_p1["system_prompt"]
+    assert "Is my work correct?" in payload_p2["system_prompt"]
+
+
+def test_compile_formative_payload_posture_2_no_error_injection(tmp_path):
+    """
+    Verifies the edge case where posture_2 is selected, but the task's recipe 
+    does not utilize any tools that have corrupted variants (e.g., TRUSS_0004).
+    The compiler should dynamically detect that no error was injected and 
+    grade the work as correct.
+    """
+    # 1. Dynamically load TRUSS_0004 (ZFM inspection only, no global reactions)
+    current_dir = Path(__file__).parent
+    examples_dir = current_dir / "examples"
+    example_path = examples_dir / "example_TRUSS_0004.py"
+    
+    if not example_path.exists():
+        pytest.skip("example_TRUSS_0004.py not found in examples directory.")
+
+    spec = importlib.util.spec_from_file_location("example_TRUSS_0004", example_path)
+    truss_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(truss_module)
+    task = BenchmarkTask.from_module(truss_module)
+
+    # 2. Setup mock directories and a dummy image
+    figs_dir = tmp_path / "figs"
+    figs_dir.mkdir()
+    output_dir = tmp_path / "output"
+    
+    tiny_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    dummy_image_path = figs_dir / f"{task.benchmark_id}.png"
+    dummy_image_path.write_bytes(tiny_png)
+
+    # 3. Test Posture 2
+    payload = compile_formative_payload(
+        task=task,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_2"
+    )
+    
+    # 4. Assert that because no corrupted tools were called, the work remains correct
+    assert payload["posture_type"] == "posture_2"
+    assert payload["ground_truth"]["is_work_correct"] is True
+    assert payload["ground_truth"]["error_step_number"] is None
+
+
 def test_task_to_prompt_formative_all(tmp_path, capsys):
     """
     Verifies that the batch iterator crawls the directory and successfully 
@@ -398,3 +510,168 @@ def test_task_to_prompt_formative_all(tmp_path, capsys):
     # 5. Verify the files hit the disk
     json_files = list(output_dir.glob("*_formative_posture_1_payload.json"))
     assert len(json_files) > 0
+
+
+def test_task_to_prompt_formative_all_posture_2(tmp_path, capsys):
+    """
+    Verifies that the batch iterator crawls the directory and successfully 
+    generates JSON payloads for all discovered examples using posture_2.
+    It also verifies that the dynamic error tracking correctly identifies 
+    which files have injected errors and which do not.
+    """
+    # 1. Resolve paths
+    current_dir = Path(__file__).parent
+    examples_dir = current_dir / "examples"
+    
+    if not list(examples_dir.glob("example_TRUSS_*.py")):
+        pytest.skip("No examples found")
+
+    figs_dir = tmp_path / "figs"
+    figs_dir.mkdir()
+    output_dir = tmp_path / "output"
+    
+    # 2. Write dummy images for all examples to avoid FileNotFoundError
+    tiny_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    for ex in examples_dir.glob("example_TRUSS_*.py"):
+        spec = importlib.util.spec_from_file_location(ex.stem, ex)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        bid = mod.METADATA["benchmark_id"]
+        (figs_dir / f"{bid}.png").write_bytes(tiny_png)
+
+    # 3. Execute the batch iterator
+    task_to_prompt_formative_all(
+        examples_dir=examples_dir,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_2"
+    )
+
+    # 4. Verify terminal output
+    captured = capsys.readouterr()
+    assert "Successfully generated" in captured.out
+    
+    # 5. Verify the files hit the disk with the posture_2 suffix
+    json_files = list(output_dir.glob("*_formative_posture_2_payload.json"))
+    assert len(json_files) > 0
+    
+    # 6. Peek inside TRUSS_0001 to confirm the error payload generated correctly.
+    # This task uses global reactions, so it should have an injected error.
+    target_file_1 = output_dir / "example_TRUSS_0001_formative_posture_2_payload.json"
+    if target_file_1.exists():
+        with open(target_file_1, "r") as f:
+            payload_data_1 = json.load(f)
+            
+        assert payload_data_1["posture_type"] == "posture_2"
+        assert payload_data_1["ground_truth"]["is_work_correct"] is False
+        assert payload_data_1["ground_truth"]["error_step_number"] == 1
+        
+    # 7. Peek inside TRUSS_0004 to confirm the edge case worked.
+    # This task skips global reactions, so no corrupted tools are called, meaning work is correct.
+    target_file_4 = output_dir / "example_TRUSS_0004_formative_posture_2_payload.json"
+    if target_file_4.exists():
+        with open(target_file_4, "r") as f:
+            payload_data_4 = json.load(f)
+            
+        assert payload_data_4["posture_type"] == "posture_2"
+        assert payload_data_4["ground_truth"]["is_work_correct"] is True
+        assert payload_data_4["ground_truth"]["error_step_number"] is None
+
+
+def test_compile_formative_payload_posture_3_with_mos(tmp_path):
+    """
+    Verifies that posture_3 correctly injects a late-stage Tension/Compression
+    error when the task utilizes the Method of Sections tool (e.g., TRUSS_0003).
+    """
+    import importlib.util
+    from pathlib import Path
+    from trusstutor_bench.task_base import BenchmarkTask
+    from trusstutor_bench.task_to_prompt_formative import compile_formative_payload
+
+    # 1. Dynamically load TRUSS_0003 (Method of Sections)
+    current_dir = Path(__file__).parent
+    examples_dir = current_dir / "examples"
+    example_path = examples_dir / "example_TRUSS_0003.py"
+    
+    if not example_path.exists():
+        pytest.skip("example_TRUSS_0003.py not found in examples directory.")
+
+    spec = importlib.util.spec_from_file_location("example_TRUSS_0003", example_path)
+    truss_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(truss_module)
+    task = BenchmarkTask.from_module(truss_module)
+
+    # 2. Setup mock directories and a dummy image for the encoder
+    figs_dir = tmp_path / "figs"
+    figs_dir.mkdir()
+    output_dir = tmp_path / "output"
+    
+    tiny_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    dummy_image_path = figs_dir / f"{task.benchmark_id}.png"
+    dummy_image_path.write_bytes(tiny_png)
+
+    # 3. Compile the payload targeting Posture 3
+    payload = compile_formative_payload(
+        task=task,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_3"
+    )
+    
+    # 4. Verify Posture 3 successfully injected the error
+    assert payload["posture_type"] == "posture_3"
+    assert payload["ground_truth"]["is_work_correct"] is False
+    assert payload["ground_truth"]["error_step_number"] is not None
+    assert isinstance(payload["ground_truth"]["error_step_number"], int)
+    
+    # 5. Verify the prompt matches the Posture 3 student query
+# 5. Verify the prompt matches the Posture 3 student query
+    assert "Can you find the mistake in my work?" in payload["system_prompt"]
+
+
+def test_compile_formative_payload_posture_3_with_moj_edge_case(tmp_path):
+    """
+    Verifies the edge case where posture_3 is selected, but the task's recipe 
+    DOES NOT utilize the Method of Sections tool (e.g., TRUSS_0001). 
+    The compiler should dynamically detect that no error was injected and 
+    grade the work as correct.
+    """
+    import importlib.util
+    from pathlib import Path
+    from trusstutor_bench.task_base import BenchmarkTask
+    from trusstutor_bench.task_to_prompt_formative import compile_formative_payload
+
+    # 1. Dynamically load TRUSS_0001 (Method of Joints ONLY)
+    current_dir = Path(__file__).parent
+    examples_dir = current_dir / "examples"
+    example_path = examples_dir / "example_TRUSS_0001.py"
+    
+    if not example_path.exists():
+        pytest.skip("example_TRUSS_0001.py not found in examples directory.")
+
+    spec = importlib.util.spec_from_file_location("example_TRUSS_0001", example_path)
+    truss_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(truss_module)
+    task = BenchmarkTask.from_module(truss_module)
+
+    # 2. Setup mock directories and a dummy image for the encoder
+    figs_dir = tmp_path / "figs"
+    figs_dir.mkdir()
+    output_dir = tmp_path / "output"
+    
+    tiny_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    dummy_image_path = figs_dir / f"{task.benchmark_id}.png"
+    dummy_image_path.write_bytes(tiny_png)
+
+    # 3. Compile the payload targeting Posture 3
+    payload = compile_formative_payload(
+        task=task,
+        figs_dir=figs_dir,
+        output_dir=output_dir,
+        posture_type="posture_3"
+    )
+    
+    # 4. Assert that because no corrupted Method of Sections tools were called, the work remains correct
+    assert payload["posture_type"] == "posture_3"
+    assert payload["ground_truth"]["is_work_correct"] is True
+    assert payload["ground_truth"]["error_step_number"] is None

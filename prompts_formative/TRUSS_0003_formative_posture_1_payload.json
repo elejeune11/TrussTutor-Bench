@@ -59,5 +59,9 @@
         "P1": 60.0,
         "P2": 80.0,
         "theta": 20.0
+    },
+    "ground_truth": {
+        "is_work_correct": true,
+        "error_step_number": null
     }
 }

@@ -28,7 +28,7 @@ def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, ato
             return False
         return str(truth_val).strip().lower() == str(pred_val).strip().lower()
 
-    # 4. Object / Dictionary Comparison (The Fix)
+    # 4. Object / Dictionary Comparison
     if expected_type == "object" or isinstance(truth_val, dict):
         if not isinstance(pred_val, dict):
             return False
@@ -55,14 +55,6 @@ def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, ato
 def evaluate_single_task(ground_truth: dict, prediction: dict, schema: dict) -> dict:
     """
     Grades an LLM output against ground truth using the task's expected schema.
-    
-    Args:
-        ground_truth (dict): The canonical answers embedded in the payload.
-        prediction (dict): The parsed JSON output from the LLM.
-        schema (dict): The expected_llm_output schema definition.
-        
-    Returns:
-        dict: A scorecard containing an overall pass/fail status and field-level details.
     """
     properties = schema.get("properties", {})
     field_results = {}
@@ -109,10 +101,6 @@ def generate_minimal_report(overall_results: dict, report_path: Path) -> None:
     """
     Calculates basic aggregate metrics, prints a terminal summary, 
     and saves the complete evaluation report to disk.
-    
-    Args:
-        overall_results (dict): The dictionary of evaluated tasks from evaluate_single_task.
-        report_path (Path): The file path where the JSON report should be saved.
     """
     total_tasks = len(overall_results)
     total_passed = sum(1 for result in overall_results.values() if result.get("passed", False))
@@ -131,7 +119,6 @@ def generate_minimal_report(overall_results: dict, report_path: Path) -> None:
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(final_report, f, indent=4)
         
-    print("\n=== Minimal Evaluation Report ===")
     print(f"Total Tasks:  {total_tasks}")
     print(f"Total Passed: {total_passed}")
     print(f"Accuracy:     {accuracy:.2f}%")
@@ -141,14 +128,6 @@ def generate_minimal_report(overall_results: dict, report_path: Path) -> None:
 def evaluate_outputs_minimal(prompts_dir: Path, outputs_dir: Path, report_path: Path) -> dict:
     """
     Orchestrates the evaluation of all LLM outputs against their corresponding payloads.
-    
-    Args:
-        prompts_dir (Path): Directory containing the generated *_payload.json files.
-        outputs_dir (Path): Directory containing the LLM *_response.json files.
-        report_path (Path): File path where the final JSON report should be saved.
-        
-    Returns:
-        dict: The overall results mapped by benchmark ID.
     """
     print("=== Starting TrussTutor-Bench Evaluation ===")
     
@@ -180,38 +159,42 @@ def evaluate_outputs_minimal(prompts_dir: Path, outputs_dir: Path, report_path: 
         schema = payload["structured_schema"]
         ground_truth = payload["ground_truth"]
         
-        # Evaluate the single task and store the scorecard
         overall_results[benchmark_id] = evaluate_single_task(ground_truth, prediction, schema)
         
-    # Generate the final aggregate report
     generate_minimal_report(overall_results, report_path)
     
     return overall_results
 
 
-def evaluate_formative_task(prediction: dict, is_student_work_flawless: bool = True) -> dict:
+def evaluate_formative_task(prediction: dict, ground_truth: dict) -> dict:
     """
-    Grades a single formative tutoring response.
-    Currently defaults to expecting flawless student work (is_work_correct == True) 
-    until the state corruptor is implemented.
+    Grades a single formative tutoring response against the expected ground truth.
+    Evaluates both error identification and step localization.
     """
-    pred_correct = prediction.get("is_work_correct")
+    expected_is_correct = ground_truth.get("is_work_correct")
+    expected_error_step = ground_truth.get("error_step_number")
     
-    # Did the model correctly evaluate the student's work?
-    passed = (pred_correct is is_student_work_flawless)
+    pred_correct = prediction.get("is_work_correct")
+    pred_error_step = prediction.get("error_step_number")
+    
+    passed_correctness = (pred_correct is expected_is_correct)
+    passed_step = (pred_error_step == expected_error_step)
+    
+    passed = passed_correctness and passed_step
     
     return {
         "passed": passed,
         "prediction": prediction,
-        "expected_is_work_correct": is_student_work_flawless
+        "ground_truth": ground_truth
     }
 
 
-def evaluate_outputs_formative(prompts_dir: Path, outputs_dir: Path, report_path: Path) -> dict:
+def evaluate_outputs_formative(prompts_dir: Path, outputs_dir: Path, target_posture: str, report_path: Path) -> dict:
     """
-    Orchestrates the evaluation of all formative LLM outputs.
+    Orchestrates the evaluation of formative LLM outputs for a specific posture.
+    For flawed postures (2 and 3), it skips examples where the ground truth is flawless to isolate error detection.
     """
-    print("=== Starting Formative Evaluation ===")
+    print(f"\n=== Starting Formative Evaluation for {target_posture} ===")
     
     if not outputs_dir.exists() or not list(outputs_dir.glob("*_response.json")):
         print(f"[ERROR] No formative responses found in {outputs_dir}")
@@ -221,14 +204,31 @@ def evaluate_outputs_formative(prompts_dir: Path, outputs_dir: Path, report_path
     
     for response_file in outputs_dir.glob("*_response.json"):
         benchmark_id = response_file.stem.replace("_response", "")
+        payload_file = prompts_dir / f"{benchmark_id}_payload.json"
         
+        if not payload_file.exists():
+            continue
+            
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+            
+        # --- Filter by the requested posture ---
+        if payload.get("posture_type") != target_posture:
+            continue
+            
+        ground_truth = payload.get("ground_truth", {})
+        
+        # --- Posture-specific skipping ---
+        # If we are evaluating a flawed posture (2 or 3), strictly isolate error detection 
+        # by skipping tasks where no error was successfully injected.
+        if target_posture in ["posture_2", "posture_3"] and ground_truth.get("is_work_correct") is True:
+            continue
+            
         with open(response_file, "r", encoding="utf-8") as f:
             prediction = json.load(f)
             
-        # Grade the task (assuming perfect student work for now)
-        overall_results[benchmark_id] = evaluate_formative_task(prediction)
+        overall_results[benchmark_id] = evaluate_formative_task(prediction, ground_truth)
         
-    # Reuse your existing minimal report generator to save the formative scorecard
     generate_minimal_report(overall_results, report_path)
     
     return overall_results

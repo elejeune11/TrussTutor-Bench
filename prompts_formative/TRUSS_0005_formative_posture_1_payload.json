@@ -109,5 +109,9 @@
     "ground_truth_variables": {
         "max_tension": 30.0,
         "max_compression": 50.0
+    },
+    "ground_truth": {
+        "is_work_correct": true,
+        "error_step_number": null
     }
 }

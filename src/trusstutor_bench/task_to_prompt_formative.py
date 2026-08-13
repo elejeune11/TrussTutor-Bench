@@ -59,7 +59,7 @@ def get_student_posture(posture_type: str) -> str:
     postures = {
         "posture_1": "I am getting the wrong answer according to my professor and the homework answer key. Where did I make a mistake in my work?",
         "posture_2": "Is my work correct?",
-        "posture_3": "Can you find the mistake in my work?"
+        "posture_3": "Is my work correct?"
     }
     
     if posture_type not in postures:

@@ -59,7 +59,7 @@ def test_get_student_posture():
     assert get_student_posture("posture_2") == expected_text_2
 
     # 3. Test valid posture_3 retrieval
-    expected_text_3 = "Can you find the mistake in my work?"
+    expected_text_3 = "Is my work correct?"
     assert get_student_posture("posture_3") == expected_text_3
 
     # 4. Test invalid posture exception handling
@@ -626,7 +626,7 @@ def test_compile_formative_payload_posture_3_with_mos(tmp_path):
     
     # 5. Verify the prompt matches the Posture 3 student query
 # 5. Verify the prompt matches the Posture 3 student query
-    assert "Can you find the mistake in my work?" in payload["system_prompt"]
+    assert "Is my work correct?" in payload["system_prompt"]
 
 
 def test_compile_formative_payload_posture_3_with_moj_edge_case(tmp_path):

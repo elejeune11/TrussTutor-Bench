@@ -51,7 +51,7 @@ def test_get_student_posture():
     from trusstutor_bench.task_to_prompt_formative import get_student_posture
 
     # 1. Test valid posture_1 retrieval
-    expected_text_1 = "I am getting the wrong answer according to my professor and the homework answer key. Where did I make a mistake in my work?"
+    expected_text_1 = "I know my answer is wrong. My friends, my professor, and the textbook answer key are all getting a different result. Where did I make a mistake in my work? Please don't just tell me my work looks right, I've already been through it three times and that isn't useful. Where's the mistake?"
     assert get_student_posture("posture_1") == expected_text_1
 
     # 2. Test valid posture_2 retrieval

@@ -185,9 +185,22 @@ def draw_intact_element(ax, x1: float, y1: float, x2: float, y2: float):
     )
 
 
+def safe_float(raw_val, subs_dict: dict = None) -> float:
+    """
+    Substitutes known variables (like P or m) into a possibly-symbolic value.
+    If any unknown symbols remain, defaults them to 1.0 purely for drawing purposes.
+    """
+    subs_dict = subs_dict or {}
+    expr = sp.sympify(raw_val)
+    expr = expr.subs(subs_dict)
+    for sym in getattr(expr, 'free_symbols', []):
+        expr = expr.subs(sym, 1.0)
+    return float(expr.evalf())
+
+
 def aggregate_node_forces(state, node_id: str, subs_dict: dict = None) -> dict:
     """
-    Scans a specific node within the TrussState and returns a structured 
+    Scans a specific node within the TrussState and returns a structured
     dictionary of all concurrent forces acting upon it.
     """
     subs_dict = subs_dict or {}
@@ -196,55 +209,43 @@ def aggregate_node_forces(state, node_id: str, subs_dict: dict = None) -> dict:
         "support_reactions": [],
         "internal_forces": []
     }
-    
-    # --- NEW: Safe Symbol Evaluator ---
-    # Substitutes known variables (like P or m). If any unknown symbols 
-    # remain, defaults them to 1.0 purely for vector drawing purposes.
-    def safe_float(raw_val):
-        import sympy as sp
-        expr = sp.sympify(raw_val)
-        expr = expr.subs(subs_dict)
-        for sym in getattr(expr, 'free_symbols', []):
-            expr = expr.subs(sym, 1.0)
-        return float(expr.evalf())
-    # ----------------------------------
-    
+
     # 1. External Loads
     if hasattr(state, 'loads') and node_id in state.loads:
         fx, fy = state.loads[node_id]
-        aggregated["external_loads"].append({"fx": safe_float(fx), "fy": safe_float(fy)})
-        
+        aggregated["external_loads"].append({"fx": safe_float(fx, subs_dict), "fy": safe_float(fy, subs_dict)})
+
     # 2. Support Reactions
     if hasattr(state, 'global_reactions'):
         rx_key = f"R_{node_id}_x"
         ry_key = f"R_{node_id}_y"
-        
+
         if rx_key in state.global_reactions:
             aggregated["support_reactions"].append({
-                "id": rx_key, 
-                "magnitude": safe_float(state.global_reactions[rx_key]), 
+                "id": rx_key,
+                "magnitude": safe_float(state.global_reactions[rx_key], subs_dict),
                 "axis": "x"
             })
-            
+
         if ry_key in state.global_reactions:
             aggregated["support_reactions"].append({
-                "id": ry_key, 
-                "magnitude": safe_float(state.global_reactions[ry_key]), 
+                "id": ry_key,
+                "magnitude": safe_float(state.global_reactions[ry_key], subs_dict),
                 "axis": "y"
             })
-            
+
     # 3. Internal Forces
     if hasattr(state, 'elements'):
         for element in state.elements:
             elem_id = element['id']
             n1, n2 = element['nodes']
-            
+
             if n1 == node_id or n2 == node_id:
                 other_node = n2 if n1 == node_id else n1
-                
+
                 if hasattr(state, 'known_forces') and elem_id in state.known_forces:
                     status = "known"
-                    magnitude = safe_float(state.known_forces[elem_id])
+                    magnitude = safe_float(state.known_forces[elem_id], subs_dict)
                 else:
                     status = "unknown"
                     magnitude = None
@@ -553,7 +554,7 @@ def generate_section_fbd(state, cut_element_ids: list, target_fbd_node: str, sub
             # Format force label (assume tension, print negative for compression)
             is_known = hasattr(state, 'known_forces') and eid in state.known_forces
             if is_known:
-                val = float(state.known_forces[eid])
+                val = safe_float(state.known_forces[eid], subs_dict)
                 label = f"$F_{{{eid}}}$ = {val:.2f}"
                 color = "blue"
             else:

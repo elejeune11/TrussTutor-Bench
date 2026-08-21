@@ -1,4 +1,24 @@
 import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations
+
+# sympy.abc documents these single-letter names as clashing with real sympy
+# objects (C=Catalan, O=Order, S=Singleton registry, I=imaginary unit,
+# N=numeric evaluator, E=Euler's number, Q=assumptions namespace). Trace
+# values are logged as plain strings (e.g. "5*P/2 - Q/3") and re-parsed here;
+# a problem symbol named e.g. "Q" would otherwise silently resolve to
+# sympy's assumptions object instead of a fresh Symbol('Q').
+_SYMPY_RESERVED_CLASH_NAMES = ("C", "O", "S", "I", "N", "E", "Q")
+
+
+def _safe_sympify(val):
+    """Parses a trace value, immune to single-letter sympy name collisions."""
+    if isinstance(val, str):
+        global_dict = {}
+        exec("from sympy import *", global_dict)
+        for name in _SYMPY_RESERVED_CLASH_NAMES:
+            global_dict.pop(name, None)
+        return parse_expr(val, global_dict=global_dict, transformations=standard_transformations)
+    return sp.sympify(val)
 
 
 def parse_trace_value(var_name: str, val, unit: str = "") -> str:
@@ -42,7 +62,7 @@ def parse_trace_value(var_name: str, val, unit: str = "") -> str:
     # 2. Parse the numerical value and determine semantic state
     try:
         # sympify handles fractions, algebraic strings, and native numbers
-        num_val = float(sp.sympify(val).evalf())
+        num_val = float(_safe_sympify(val).evalf())
         abs_val = abs(num_val)
         
         # Filter out extreme floating point noise (e.g., 1e-15 -> 0.0)
@@ -63,7 +83,7 @@ def parse_trace_value(var_name: str, val, unit: str = "") -> str:
             
     except (ValueError, TypeError):
         # Fallback for purely symbolic outputs (e.g., "P/2") that cannot be coerced to float
-        clean_symbolic = str(sp.simplify(val))
+        clean_symbolic = str(sp.simplify(_safe_sympify(val)))
         val_str = f"{clean_symbolic}{unit_str} (Algebraic)"
 
     return f"{latex_var} = {val_str}"

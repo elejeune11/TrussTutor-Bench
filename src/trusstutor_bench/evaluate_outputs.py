@@ -3,12 +3,37 @@ import json
 from pathlib import Path
 
 
-def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, atol=1e-3) -> bool:
+def _normalize_member_id(member_id: str) -> str:
+    """
+    Canonicalizes a member/edge name so direction doesn't matter (a truss
+    member is undirected: "BG" and "GB" name the same physical member).
+    Handles both naming conventions used across the dataset: two-letter
+    joint pairs ("AB", "BG") and dash-separated numeric joints ("9-8").
+    Falls back to a plain lowercase string for anything else, so this is
+    safe to apply even when a value isn't actually a two-endpoint name.
+    """
+    s = member_id.strip()
+    if "-" in s:
+        parts = s.split("-")
+    elif len(s) == 2 and s.isalpha():
+        parts = list(s)
+    else:
+        return s.lower()
+    return "-".join(sorted(p.strip().lower() for p in parts))
+
+
+def _is_member_name_field(field_name: str) -> bool:
+    """Field-naming convention in this dataset: member-identifier fields are
+    always named "*member*" (e.g. "controlling_member", "zero_force_members")."""
+    return field_name is not None and "member" in field_name.lower()
+
+
+def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, atol=1e-3, field_name: str = None) -> bool:
     """
     Compares a single ground-truth value against an LLM prediction based on the expected JSON schema type.
     """
     expected_type = field_schema.get("type")
-    
+
     # 1. Numerical Comparison
     if expected_type in ["number", "float", "integer"] or isinstance(truth_val, (int, float)):
         try:
@@ -20,31 +45,35 @@ def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, ato
     if expected_type == "array" or isinstance(truth_val, list):
         if not isinstance(pred_val, list):
             return False
+        if _is_member_name_field(field_name):
+            return {_normalize_member_id(v) for v in truth_val} == {_normalize_member_id(v) for v in pred_val}
         return set(truth_val) == set(pred_val)
 
     # 3. String / Enum Comparison
     if expected_type == "string" or isinstance(truth_val, str):
         if not isinstance(pred_val, str):
             return False
+        if _is_member_name_field(field_name):
+            return _normalize_member_id(truth_val) == _normalize_member_id(pred_val)
         return str(truth_val).strip().lower() == str(pred_val).strip().lower()
 
     # 4. Object / Dictionary Comparison
     if expected_type == "object" or isinstance(truth_val, dict):
         if not isinstance(pred_val, dict):
             return False
-        
+
         properties = field_schema.get("properties", {})
-        
+
         for key, true_sub_val in truth_val.items():
             pred_sub_val = pred_val.get(key)
             if pred_sub_val is None:
                 return False
-            
+
             # Fetch the nested schema, or default to an empty dict to rely on Python type inference
             sub_schema = properties.get(key, {})
-            
+
             # Recursively check the nested values
-            if not compare_field_values(true_sub_val, pred_sub_val, sub_schema, rtol, atol):
+            if not compare_field_values(true_sub_val, pred_sub_val, sub_schema, rtol, atol, field_name=key):
                 return False
         return True
 
@@ -80,7 +109,7 @@ def evaluate_single_task(ground_truth: dict, prediction: dict, schema: dict) -> 
             continue
 
         # Evaluate the specific field using the type-aware comparator
-        passed = compare_field_values(truth_val, pred_val, field_schema)
+        passed = compare_field_values(truth_val, pred_val, field_schema, field_name=field)
         
         field_results[field] = {
             "passed": passed,

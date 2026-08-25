@@ -1,6 +1,33 @@
 import math
 import json
+import sympy as sp
 from pathlib import Path
+
+from trusstutor_bench.symbolic_utils import safe_sympify
+
+
+def _looks_algebraic(s: str) -> bool:
+    """Cheap pre-filter so we only attempt a symbolic parse on strings that
+    could plausibly be a math expression (e.g. "sqrt(5)*(-3*F1-2*F2)/20"),
+    not on ordinary enum/text answers like "tension" or "compression"."""
+    return any(c.isdigit() or c in "+-*/^()" for c in s)
+
+
+def _symbolic_string_equal(truth_val: str, pred_val: str) -> bool:
+    """
+    Some tasks (e.g. force expressed as a coefficient of symbolic loads)
+    expect an algebraic string answer. There are infinitely many equivalent
+    ways to write the same expression (e.g. "sqrt(5)*(-3*F1-2*F2)/20" vs.
+    "-(3*sqrt(5)/20)*F1 - (sqrt(5)/10)*F2"), so an exact string match wrongly
+    fails a mathematically-correct answer. Falls back to sympy equivalence.
+    """
+    if not (_looks_algebraic(truth_val) and _looks_algebraic(pred_val)):
+        return False
+    try:
+        diff = sp.simplify(safe_sympify(truth_val) - safe_sympify(pred_val))
+        return diff == 0
+    except Exception:
+        return False
 
 
 def _normalize_member_id(member_id: str) -> str:
@@ -55,7 +82,9 @@ def compare_field_values(truth_val, pred_val, field_schema: dict, rtol=1e-2, ato
             return False
         if _is_member_name_field(field_name):
             return _normalize_member_id(truth_val) == _normalize_member_id(pred_val)
-        return str(truth_val).strip().lower() == str(pred_val).strip().lower()
+        if str(truth_val).strip().lower() == str(pred_val).strip().lower():
+            return True
+        return _symbolic_string_equal(truth_val, pred_val)
 
     # 4. Object / Dictionary Comparison
     if expected_type == "object" or isinstance(truth_val, dict):

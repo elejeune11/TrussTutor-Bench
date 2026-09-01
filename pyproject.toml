@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=1.2.0",
     "google-generativeai>=0.8.6",
     "jsonschema>=4.26.0",
     "matplotlib>=3.10.9",
@@ -22,5 +23,9 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

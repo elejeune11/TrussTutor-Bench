@@ -13,6 +13,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "matplotlib>=3.10.9",
     "numpy>=2.4.6",
+    "pillow>=12.3.0",
     "sympy>=1.14.0",
 ]
 

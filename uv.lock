@@ -1640,6 +1640,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pillow" },
     { name = "sympy" },
 ]
 
@@ -1657,6 +1658,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.4.6" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
 

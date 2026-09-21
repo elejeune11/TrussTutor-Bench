@@ -21,10 +21,11 @@ from trusstutor_bench.task_to_prompt import task_to_prompt_all
 from llm_api.run_gemini_mwe import run_gemini_mwe
 from trusstutor_bench.evaluate_outputs import evaluate_outputs_minimal
 from llm_api.run_anthropic_client import run_anthropic
+from llm_api.run_openai_client import run_openai
+from llm_api.run_togetherai_client import run_togetherai
 
 # List of available models for the pipeline
-available_models = ["gemini-3.1-pro", "claude-opus-5", "claude-sonnet-5"]
-
+available_models = ["gemini-3.1-pro", "claude-opus-5", "claude-sonnet-5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]
 
 async def process_payload_async(payload_path: Path, outputs_dir: Path, llm_model: str):
     """Wraps the synchronous Gemini API call in an async thread."""
@@ -43,6 +44,10 @@ async def process_payload_async(payload_path: Path, outputs_dir: Path, llm_model
             result = await asyncio.to_thread(run_gemini_mwe, str(payload_path))
         elif llm_model in ["claude-opus-5", "claude-sonnet-5"]:
             result = await run_anthropic(llm_model, payload_path)
+        elif llm_model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]:
+            result = await run_openai(llm_model, payload_path)
+        elif llm_model in ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]:
+            result = await run_togetherai(llm_model, payload_path)
         else:
             raise ValueError(f"Unsupported LLM model: {llm_model}")
 
@@ -83,13 +88,15 @@ def main():
     llm_model_id = args.model
 
     # 1. Define Paths
-    tasks_dir = SUPPORT_CODE_DIR / "examples"
+    tasks_dir = PROJECT_ROOT / "tasks"
     figs_dir = tasks_dir / "figs"
 
 
-    prompts_dir = PROJECT_ROOT / "prompts_200_examples"
-    outputs_dir = PROJECT_ROOT / f"llm_outputs_{llm_model_id}"
-    report_path = PROJECT_ROOT / f"evaluation_report_{llm_model_id}.json"
+    safe_model_id = llm_model_id.replace("/", "-")
+
+    prompts_dir = PROJECT_ROOT / "prompts"
+    outputs_dir = PROJECT_ROOT / f"llm_outputs_{safe_model_id}"
+    report_path = PROJECT_ROOT / f"evaluation_report_{safe_model_id}.json"
 
     prompts_dir.mkdir(exist_ok=True)
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -107,10 +114,16 @@ def main():
     if llm_model_id == "gemini-3.1-pro":
         if not os.environ.get("GEMINI_API_KEY"):
             print("[WARNING] GEMINI_API_KEY is not set. API calls may fail.")
-    else:
+    elif llm_model_id in ["claude-opus-5", "claude-sonnet-5"]:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("[WARNING] ANTHROPIC_API_KEY is not set. API calls may fail.")
-        
+    elif llm_model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]:
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("[WARNING] OPENAI_API_KEY is not set. API calls may fail.")
+    elif llm_model_id in ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]:
+        if not os.environ.get("TOGETHER_API_KEY"):
+            print("[WARNING] TOGETHER_API_KEY is not set. API calls may fail.")
+
     payload_files = list(prompts_dir.glob("*_payload.json"))
     if not payload_files:
         print(f"[ERROR] No prompt payloads found in {prompts_dir}. Exiting.")

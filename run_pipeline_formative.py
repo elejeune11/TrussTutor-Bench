@@ -20,12 +20,14 @@ sys.path.append(str(SUPPORT_CODE_DIR / "src"))
 from trusstutor_bench.task_to_prompt_formative import task_to_prompt_formative_all
 from llm_api.run_gemini_mwe import run_gemini_mwe_formative
 from llm_api.run_anthropic_client import run_anthropic_formative
+from llm_api.run_openai_client import run_openai_formative
+from llm_api.run_togetherai_client import run_togetherai_formative
 
 # Import the evaluation modules
 from trusstutor_bench.evaluate_outputs import evaluate_outputs_formative, cross_evaluate_2x2_matrix
 
 # List of available models for the pipeline
-available_models = ["gemini-3.1-pro", "claude-opus-5", "claude-sonnet-5"]
+available_models = ["gemini-3.1-pro", "claude-opus-5", "claude-sonnet-5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]
 
 async def process_payload_async(payload_path: Path, outputs_dir: Path, llm_model: str):
     """Wraps the synchronous Gemini API call in an async thread, or calls Claude natively."""
@@ -44,6 +46,10 @@ async def process_payload_async(payload_path: Path, outputs_dir: Path, llm_model
             result = await asyncio.to_thread(run_gemini_mwe_formative, str(payload_path))
         elif llm_model in ["claude-opus-5", "claude-sonnet-5"]:
             result = await run_anthropic_formative(llm_model, payload_path)
+        elif llm_model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]:
+            result = await run_openai_formative(llm_model, payload_path)
+        elif llm_model in ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]:
+            result = await run_togetherai_formative(llm_model, payload_path)
         else:
             raise ValueError(f"Unsupported LLM model: {llm_model}")
 
@@ -120,12 +126,14 @@ def main():
     tasks_dir = PROJECT_ROOT / "tasks"
     figs_dir = tasks_dir / "figs"
 
+    safe_model_id = llm_model_id.replace("/", "-")
+
     prompts_dir = PROJECT_ROOT / "prompts_formative"
-    outputs_dir = PROJECT_ROOT / f"llm_outputs_formative_{llm_model_id}"
-    report_posture_1 = PROJECT_ROOT / f"formative_evaluation_report_posture_1_{llm_model_id}.json"
-    report_posture_2 = PROJECT_ROOT / f"formative_evaluation_report_posture_2_{llm_model_id}.json"
-    report_posture_3 = PROJECT_ROOT / f"formative_evaluation_report_posture_3_{llm_model_id}.json"
-    baseline_report_path = PROJECT_ROOT / f"evaluation_report_{llm_model_id}.json"
+    outputs_dir = PROJECT_ROOT / f"llm_outputs_formative_{safe_model_id}"
+    report_posture_1 = PROJECT_ROOT / f"formative_evaluation_report_posture_1_{safe_model_id}.json"
+    report_posture_2 = PROJECT_ROOT / f"formative_evaluation_report_posture_2_{safe_model_id}.json"
+    report_posture_3 = PROJECT_ROOT / f"formative_evaluation_report_posture_3_{safe_model_id}.json"
+    baseline_report_path = PROJECT_ROOT / f"evaluation_report_{safe_model_id}.json"
 
     prompts_dir.mkdir(exist_ok=True)
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -147,9 +155,15 @@ def main():
     if llm_model_id == "gemini-3.1-pro":
         if not os.environ.get("GEMINI_API_KEY"):
             print("[WARNING] GEMINI_API_KEY is not set. API calls may fail.")
-    else:
+    elif llm_model_id in ["claude-opus-5", "claude-sonnet-5"]:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("[WARNING] ANTHROPIC_API_KEY is not set. API calls may fail.")
+    elif llm_model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]:
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("[WARNING] OPENAI_API_KEY is not set. API calls may fail.")
+    elif llm_model_id in ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3-Flash", "meta-models/Muse-Glimmer-30B", "thinkingmachines/Inkling", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B"]:
+        if not os.environ.get("TOGETHER_API_KEY"):
+            print("[WARNING] TOGETHER_API_KEY is not set. API calls may fail.")
 
     all_payload_files = list(prompts_dir.glob("*_payload.json"))
     if not all_payload_files:

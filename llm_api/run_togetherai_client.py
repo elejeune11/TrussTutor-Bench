@@ -1,39 +1,34 @@
 import base64
 from PIL import Image
 import io
+import math
 from pathlib import Path
 import json
 from together import AsyncTogether
 
 TOGETHERAI_IMAGE_RAW_SIZE_LIMIT = 20_000_000
 TOGETHERAI_IMAGE_MAX_DIMENSION = 2048
-TOGETHERAI_MAX_TOKENS = 20000
+TOGETHERAI_MAX_TOKENS = 64000
+
+# Together rejects requests whose decoded images total too many pixels (413 error),
+# so formative images are scaled down together to stay under this budget.
+TOGETHERAI_PIXEL_BUDGET = 20_000_000
+
 TOGETHERAI_REASONING_ENABLED = True
-TOGETHERAI_REASONING_EFFORT_DEFAULT = "medium"
-TOGETHERAI_REASONING_EFFORT_OVERRIDES = {
-    "deepseek-ai/DeepSeek-V4.1-Flash": 50,
-    "zai-org/GLM-5.3-Flash": "high",
-}
+TOGETHERAI_REASONING_EFFORT = "high"
 
 
-def get_reasoning_effort(llm_model: str):
-    return TOGETHERAI_REASONING_EFFORT_OVERRIDES.get(llm_model, TOGETHERAI_REASONING_EFFORT_DEFAULT)
-
-
-TOGETHERAI_THINKING_OVERRIDES = {
-    "MiniMaxAI/MiniMax-M3": {"type": "enabled"},
-}
-
-
-def get_thinking_field(llm_model: str):
-    return TOGETHERAI_THINKING_OVERRIDES.get(llm_model)
-
-
-def prepare_image_for_togetherai(image_base64: str) -> str:
-    
+def prepare_image_for_togetherai(image_base64: str, scale: float = 1.0) -> str:
     """
-    Returns a data-URI string ("data:image/<format>;base64,<data>") safe for
-    together.ai's Chat Completions API, which takes the image as a single string.
+    Returns the image as a data URI, resized to JPEG if it exceeds the size or
+    dimension limit, or if scale is below 1.0.
+
+    Args:
+        image_base64 (str): Base64-encoded image.
+        scale (float): Linear scale applied when the image is resized.
+
+    Returns:
+        str: Data URI ("data:image/<format>;base64,<data>").
     """
     image_bytes = base64.b64decode(image_base64)
     img = Image.open(io.BytesIO(image_bytes))
@@ -42,10 +37,11 @@ def prepare_image_for_togetherai(image_base64: str) -> str:
     exceeds_raw_size = len(image_bytes) > TOGETHERAI_IMAGE_RAW_SIZE_LIMIT
     exceeds_max_dimension = max(img.size) > TOGETHERAI_IMAGE_MAX_DIMENSION
 
-    if not exceeds_raw_size and not exceeds_max_dimension:
+    if not exceeds_raw_size and not exceeds_max_dimension and scale >= 1.0:
         return f"data:{media_type};base64,{image_base64}"
 
-    img.thumbnail((TOGETHERAI_IMAGE_MAX_DIMENSION, TOGETHERAI_IMAGE_MAX_DIMENSION), Image.LANCZOS)
+    target_dimension = int(min(max(img.size), TOGETHERAI_IMAGE_MAX_DIMENSION) * scale)
+    img.thumbnail((target_dimension, target_dimension), Image.LANCZOS)
     if img.mode != "RGB":
         img = img.convert("RGB")
     buffer = io.BytesIO()
@@ -55,8 +51,31 @@ def prepare_image_for_togetherai(image_base64: str) -> str:
     return f"data:image/jpeg;base64,{resized_base64}"
 
 
+def get_formative_image_scale(images_base64: list) -> float:
+    """
+    Returns the scale (at most 1.0) that makes all images together fit the pixel budget.
+
+    Args:
+        images_base64 (list): Base64-encoded images of one payload.
+
+    Returns:
+        float: Linear scale to apply to every image.
+    """
+    total_pixels = 0
+    for image_base64 in images_base64:
+        img = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+        capped = min(1.0, TOGETHERAI_IMAGE_MAX_DIMENSION / max(img.size))
+        total_pixels += int(img.size[0] * capped) * int(img.size[1] * capped)
+    return min(1.0, math.sqrt(TOGETHERAI_PIXEL_BUDGET / total_pixels))
+
+
 def _union_type_with_null(prop_schema: dict) -> None:
-    """Mutates prop_schema["type"] in place to also allow "null"."""
+    """
+    Allows "null" in prop_schema["type"], in place.
+
+    Args:
+        prop_schema (dict): Schema with a "type" key.
+    """
     original_type = prop_schema["type"]
     if isinstance(original_type, list):
         if "null" not in original_type:
@@ -67,10 +86,14 @@ def _union_type_with_null(prop_schema: dict) -> None:
 
 def clean_schema_for_togetherai(schema: dict) -> dict:
     """
-    Translates this project's "nullable" flag into a
-    real type union, strips "uniqueItems" (not supported by every
-    model's structured-output grammar compiler), and forces
-    additionalProperties: false.
+    Prepares a schema for Together's structured output: "nullable" becomes a
+    type union with "null", "uniqueItems" is removed, additionalProperties is false.
+
+    Args:
+        schema (dict): JSON Schema.
+
+    Returns:
+        dict: Cleaned copy of the schema.
     """
 
     if not isinstance(schema, dict):
@@ -89,28 +112,25 @@ def clean_schema_for_togetherai(schema: dict) -> dict:
             cleaned[key] = [clean_schema_for_togetherai(item) for item in value]
         else:
             cleaned[key] = value
-        
+
     if "properties" in cleaned:
-            cleaned["additionalProperties"] = False
-        
+        cleaned["additionalProperties"] = False
+
     if is_nullable and "type" in cleaned:
         _union_type_with_null(cleaned)
-        
+
     return cleaned
 
 def build_togetherai_request(llm_model: str, payload: dict) -> dict:
-
     """
-    Build a request dictionary for the together.ai API based on the
-    provided payload.
+    Builds the Chat Completions request for a baseline payload.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        payload (dict): A dictionary containing the benchmark ID,
-        user prompt, image in base64 format, and structured schema.
+        llm_model (str): Model ID.
+        payload (dict): Payload with the prompt, base64 image and schema.
 
     Returns:
-        dict: A dictionary formatted for the together.ai Chat Completions API request.
+        dict: Request for Together's Chat Completions API.
     """
 
     image_data_uri = prepare_image_for_togetherai(payload["image_base64"])
@@ -119,7 +139,7 @@ def build_togetherai_request(llm_model: str, payload: dict) -> dict:
         "model": llm_model,
         "max_tokens": TOGETHERAI_MAX_TOKENS,
         "reasoning": {"enabled": TOGETHERAI_REASONING_ENABLED},
-        "reasoning_effort": get_reasoning_effort(llm_model),
+        "reasoning_effort": TOGETHERAI_REASONING_EFFORT,
         "messages": [
             {
                 "role": "user",
@@ -130,60 +150,48 @@ def build_togetherai_request(llm_model: str, payload: dict) -> dict:
                     },
                     {
                         "type": "image_url",
-                        "image_url": {"url" : image_data_uri}
+                        "image_url": {"url": image_data_uri}
                     }
                 ]
             }
         ],
         "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "structured_response",
-                    "schema": clean_schema_for_togetherai(payload["structured_schema"])
-        }
+            "type": "json_schema",
+            "json_schema": {
+                "name": "structured_response",
+                "schema": clean_schema_for_togetherai(payload["structured_schema"])
             }
+        }
     }
-
-    thinking_field = get_thinking_field(llm_model)
-    if thinking_field is not None:
-        request_dict["thinking"] = thinking_field
 
     return request_dict
 
 
 async def run_togetherai(llm_model: str, json_file_path: Path) -> dict:
-
     """
-    Run the together.ai API using the provided JSON file path.
+    Sends a baseline payload to Together and returns the parsed JSON answer.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        json_file_path (Path): Path to the JSON file containing the request payload.
+        llm_model (str): Model ID.
+        json_file_path (Path): Path to the payload JSON file.
 
     Returns:
-        dict: The response from together.ai.
+        dict: The answer, with a "_usage" entry holding tokens and finish status.
     """
 
-    # Load the request payload from the JSON file
     with open(json_file_path, 'r') as f:
         payload = json.load(f)
 
-    # Build the request payload for the together.ai API
     togetherai_request = build_togetherai_request(llm_model, payload)
 
-    # Initialize the together.ai client
-    async_client = AsyncTogether(timeout=300)
+    # The SDK's default 60s timeout is too short for reasoning models under load.
+    async_client = AsyncTogether(timeout=600)
 
-    # Send the request and get the response
-    thinking_field = togetherai_request.pop("thinking", None)
-    extra_body = {"thinking": thinking_field} if thinking_field is not None else None
-    api_response = await async_client.chat.completions.create(**togetherai_request, extra_body=extra_body)
+    api_response = await async_client.chat.completions.create(**togetherai_request)
 
-    # Extract usage and status from the response
     tokens_usage = api_response.usage.completion_tokens
     status = api_response.choices[0].finish_reason
 
-    # Extract the LLM text response
     message_item = api_response.choices[0].message
     text_block = message_item.content
     if not text_block or not text_block.strip():
@@ -209,18 +217,23 @@ async def run_togetherai(llm_model: str, json_file_path: Path) -> dict:
 
 def build_togetherai_request_formative(llm_model: str, formative_payload: dict) -> dict:
     """
-    Build a request dictionary for the together.ai API based on the
-    provided formative payload.
+    Builds the Chat Completions request for a formative payload.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        formative_payload (dict): A dictionary containing the system prompt.
+        llm_model (str): Model ID.
+        formative_payload (dict): Payload with the system prompt, base image,
+            student work (text and image blocks) and schema.
 
     Returns:
-        dict: A dictionary formatted for the together.ai Chat Completions API request.
+        dict: Request for Together's Chat Completions API.
     """
 
-    base_image_data_uri = prepare_image_for_togetherai(formative_payload["base_image_base64"])
+    all_images = [formative_payload["base_image_base64"]] + [
+        block["content_base64"] for block in formative_payload["student_work"] if block["type"] == "image"
+    ]
+    scale = get_formative_image_scale(all_images)
+
+    base_image_data_uri = prepare_image_for_togetherai(formative_payload["base_image_base64"], scale)
 
     content = [
         {
@@ -233,7 +246,7 @@ def build_togetherai_request_formative(llm_model: str, formative_payload: dict) 
         if block["type"] == "text":
             content.append({"type": "text", "text": block["content"]})
         elif block["type"] == "image":
-            student_image_data_uri = prepare_image_for_togetherai(block["content_base64"])
+            student_image_data_uri = prepare_image_for_togetherai(block["content_base64"], scale)
             content.append({
                 "type": "image_url",
                 "image_url": {"url": student_image_data_uri}
@@ -243,7 +256,7 @@ def build_togetherai_request_formative(llm_model: str, formative_payload: dict) 
         "model": llm_model,
         "max_tokens": TOGETHERAI_MAX_TOKENS,
         "reasoning": {"enabled": TOGETHERAI_REASONING_ENABLED},
-        "reasoning_effort": get_reasoning_effort(llm_model),
+        "reasoning_effort": TOGETHERAI_REASONING_EFFORT,
         "messages": [
             {
                 "role": "system",
@@ -255,55 +268,42 @@ def build_togetherai_request_formative(llm_model: str, formative_payload: dict) 
             }
         ],
         "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "structured_response",
-                    "schema": clean_schema_for_togetherai(formative_payload["structured_schema"])
-        }
+            "type": "json_schema",
+            "json_schema": {
+                "name": "structured_response",
+                "schema": clean_schema_for_togetherai(formative_payload["structured_schema"])
             }
+        }
     }
-
-    thinking_field = get_thinking_field(llm_model)
-    if thinking_field is not None:
-        request_dict["thinking"] = thinking_field
 
     return request_dict
 
 
 async def run_togetherai_formative(llm_model: str, json_file_path: Path) -> dict:
-
     """
-    Run the together.ai API for a formative assessment using the provided JSON file path.
+    Sends a formative payload to Together and returns the parsed JSON answer.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        json_file_path (Path): Path to the JSON file containing the formative request payload.
+        llm_model (str): Model ID.
+        json_file_path (Path): Path to the formative payload JSON file.
 
     Returns:
-        dict: The response from the together.ai API.
+        dict: The answer, with a "_usage" entry holding tokens and finish status.
     """
 
-    # Load the request payload from the JSON file
     with open(json_file_path, 'r') as f:
         formative_payload = json.load(f)
 
-    # Build the request payload for the together.ai API
     togetherai_request = build_togetherai_request_formative(llm_model, formative_payload)
 
-    # Initialize the together.ai client
-    # Default SDK timeout is 60s, too short for slower reasoning models under load.
-    async_client = AsyncTogether(timeout=300)
+    # The SDK's default 60s timeout is too short for reasoning models under load.
+    async_client = AsyncTogether(timeout=600)
 
-    # Send the request and get the response
-    thinking_field = togetherai_request.pop("thinking", None)
-    extra_body = {"thinking": thinking_field} if thinking_field is not None else None
-    api_response = await async_client.chat.completions.create(**togetherai_request, extra_body=extra_body)
+    api_response = await async_client.chat.completions.create(**togetherai_request)
 
-    # Extract usage and status from the response
     tokens_usage = api_response.usage.completion_tokens
     status = api_response.choices[0].finish_reason
 
-    # Extract the LLM text response
     message_item = api_response.choices[0].message
     text_block = message_item.content
     if not text_block or not text_block.strip():

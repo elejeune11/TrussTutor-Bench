@@ -38,7 +38,6 @@ def test_evaluate_geometry_string_parsing():
 
     eval_nodes, eval_loads = evaluate_geometry(nodes, loads, subs_dict)
 
-    # 1. Assert precise floating point resolution using pytest.approx
     assert eval_nodes["A"] == (0.0, 0.0)
     assert eval_nodes["B"] == (10.0, 0.0)
     assert eval_nodes["C"][0] == pytest.approx(5.0)
@@ -46,8 +45,6 @@ def test_evaluate_geometry_string_parsing():
     
     assert eval_loads["C"] == (0.0, -50.0)
 
-    # 2. Assert strict type conversion (Matplotlib defense)
-    # If the float() cast failed, this would be a <class 'sympy.core.numbers.Float'>
     assert type(eval_nodes["C"][1]) is float
     assert type(eval_loads["C"][1]) is float
 
@@ -211,10 +208,7 @@ def test_transform_vertices_combined():
 
 
 def test_evaluate_geometry_loads_comprehensive():
-    """
-    Ensures the loads dictionary correctly evaluates strings, SymPy objects, 
-    and raw numbers into native Python floats.
-    """
+    """Evaluates loads given as strings, SymPy objects and plain numbers into floats."""
     P = sp.Symbol('P')
     
     # Minimal nodes dict to satisfy the first half of the function
@@ -231,12 +225,10 @@ def test_evaluate_geometry_loads_comprehensive():
     
     _, eval_loads = evaluate_geometry(nodes, loads, subs_dict)
     
-    # 1. Assert precise numerical evaluation
     assert eval_loads["Node1"] == (0.0, -50.0)
     assert eval_loads["Node2"] == (25.0, 0.0)
     assert eval_loads["Node3"] == (15.0, -30.5)
     
-    # 2. Assert strict type conversion to float to protect Matplotlib
     for nid, (fx, fy) in eval_loads.items():
         assert type(fx) is float, f"X-force on {nid} is not a float"
         assert type(fy) is float, f"Y-force on {nid} is not a float"
@@ -253,21 +245,16 @@ def test_calculate_bounding_box_empty():
 
 
 def test_draw_ground_plane():
-    """
-    Verifies that the ground plane generates the correct number of lines 
-    and applies transformations correctly to the Matplotlib axis.
-    """
+    """Draws the expected number of ground-plane lines, in the right place."""
     # Create a dummy figure and axis for testing
     fig, ax = plt.subplots()
     
     # Call the function at the origin with no rotation
     _draw_ground_plane(ax, center_x=0.0, center_y=0.0, angle_degrees=0.0, scale=1.0)
     
-    # 1. Assert lines were actually drawn
     lines = ax.get_lines()
     assert len(lines) > 2, "Ground plane should generate a main line and multiple hashes"
     
-    # 2. Extract the main ground line (the first line plotted)
     main_line = lines[0]
     x_data = main_line.get_xdata()
     y_data = main_line.get_ydata()
@@ -276,7 +263,6 @@ def test_draw_ground_plane():
     assert_allclose(x_data, [-0.4, 0.4], atol=1e-9)
     assert_allclose(y_data, [0.0, 0.0], atol=1e-9)
     
-    # 3. Verify visual hierarchy (thickness)
     assert main_line.get_linewidth() == 2.5
     assert lines[1].get_linewidth() == 1.0 # The first hash mark
     
@@ -307,16 +293,12 @@ def test_draw_ground_plane_wall():
 
 
 def test_draw_pin():
-    """
-    Verifies that the pin support generates a Polygon patch anchored exactly 
-    to the target node and triggers the ground plane lines.
-    """
+    """Draws the pin as a polygon anchored at the node, with the ground-plane lines."""
     fig, ax = plt.subplots()
     
     # Call the pin at (10, 10) with no rotation
     draw_pin(ax, x=10.0, y=10.0, angle=0.0, scale=1.0)
     
-    # 1. Verify the Triangle (Patch)
     assert len(ax.patches) == 1, "Pin should generate exactly one Polygon patch"
     pin_patch = ax.patches[0]
     assert isinstance(pin_patch, patches.Polygon)
@@ -325,8 +307,6 @@ def test_draw_pin():
     vertices = pin_patch.get_xy()
     assert_allclose(vertices[0], [10.0, 10.0], atol=1e-9)
     
-    # 2. Verify the Ground Plane (Lines)
-    # _draw_ground_plane adds lines. We expect > 2 lines (main baseline + hashes)
     lines = ax.get_lines()
     assert len(lines) > 2, "Pin should have called _draw_ground_plane to generate hashes"
     plt.close(fig)
@@ -356,15 +336,11 @@ def test_draw_pin_rotated():
 
 
 def test_draw_roller_patches():
-    """
-    Verifies that the roller support generates exactly 1 Polygon (triangle) 
-    and 2 Circles (wheels).
-    """
+    """Draws the roller as one triangle and two wheels."""
     fig, ax = plt.subplots()
     
     draw_roller(ax, x=5.0, y=5.0, angle=0.0, scale=1.0)
     
-    # 1. Assert exactly three patches were drawn
     assert len(ax.patches) == 3, "Roller should generate 3 patches (1 triangle, 2 circles)"
     
     # Matplotlib stores patches in the order they were added
@@ -437,10 +413,7 @@ def test_draw_roller_rotated():
 
 
 def test_draw_elements_layer_default_no_labels():
-    """
-    Verifies that by default, structural members are drawn but text labels 
-    are hidden to prevent visual clutter.
-    """
+    """Draws the members without labels by default."""
     fig, ax = plt.subplots()
     
     evaluated_nodes = {"A": (0.0, 0.0), "B": (10.0, 0.0)}
@@ -449,20 +422,15 @@ def test_draw_elements_layer_default_no_labels():
     # Do not pass the show_labels flag (should default to False)
     draw_elements_layer(ax, evaluated_nodes, elements)
     
-    # 1. Assert line was drawn
     assert len(ax.get_lines()) == 1
     
-    # 2. Assert NO text was drawn
     assert len(ax.texts) == 0, "Labels should be hidden by default"
     
     plt.close(fig)
 
 
 def test_draw_elements_layer_with_labels():
-    """
-    Verifies that when show_labels=True, text objects are correctly 
-    masked and centered at the member midpoints.
-    """
+    """With show_labels=True, the labels are centered at the member midpoints."""
     fig, ax = plt.subplots()
     
     evaluated_nodes = {
@@ -493,10 +461,7 @@ def test_draw_elements_layer_with_labels():
 
 
 def test_draw_nodes_layer():
-    """
-    Verifies that the correct number of node markers and text labels 
-    are generated, and that they possess the correct styling and coordinates.
-    """
+    """Draws one marker and one label per node, with the right style and position."""
     fig, ax = plt.subplots()
     
     evaluated_nodes = {
@@ -506,7 +471,6 @@ def test_draw_nodes_layer():
     
     draw_nodes_layer(ax, evaluated_nodes)
     
-    # 1. Assert exactly two marker lines were drawn
     lines = ax.get_lines()
     assert len(lines) == 2, "Should draw one marker Line2D per node"
     
@@ -517,7 +481,6 @@ def test_draw_nodes_layer():
     assert_allclose(node_A_marker.get_xdata(), [0.0], atol=1e-9)
     assert_allclose(node_A_marker.get_ydata(), [0.0], atol=1e-9)
     
-    # 2. Assert exactly two text annotations were drawn
     texts = ax.texts
     assert len(texts) == 2, "Should draw one text annotation per node"
     
@@ -531,9 +494,6 @@ def test_draw_nodes_layer():
     plt.close(fig)
 
 
-# ---------------------------------------------------------
-# 1. Standard Bridge Test (Floor Mounting)
-# ---------------------------------------------------------
 # @patch intercepts the component painters so we can check the arguments 
 # passed to them without actually rendering the Matplotlib patches.
 @patch('trusstutor_bench.draw_truss.draw_pin')
@@ -556,9 +516,6 @@ def test_draw_supports_layer_bridge(mock_draw_roller, mock_draw_pin):
     
     plt.close(fig)
 
-# ---------------------------------------------------------
-# 2. Left Wall Cantilever Test
-# ---------------------------------------------------------
 @patch('trusstutor_bench.draw_truss.draw_pin')
 def test_draw_supports_layer_left_cantilever(mock_draw_pin):
     """Tests that a truss with all supports on the left edge mounts to a wall."""
@@ -577,9 +534,6 @@ def test_draw_supports_layer_left_cantilever(mock_draw_pin):
     
     plt.close(fig)
 
-# ---------------------------------------------------------
-# 3. Right Wall Cantilever Test
-# ---------------------------------------------------------
 @patch('trusstutor_bench.draw_truss.draw_pin')
 def test_draw_supports_layer_right_cantilever(mock_draw_pin):
     """Tests that a truss with all supports on the right edge mounts correctly."""
@@ -597,9 +551,6 @@ def test_draw_supports_layer_right_cantilever(mock_draw_pin):
     assert mock_draw_pin.call_count == 2
     plt.close(fig)
 
-# ---------------------------------------------------------
-# 4. Ceiling Mount Test
-# ---------------------------------------------------------
 @patch('trusstutor_bench.draw_truss.draw_pin')
 def test_draw_supports_layer_ceiling(mock_draw_pin):
     """Tests that a hanging truss detects the ceiling and flips the pins 180 degrees."""
@@ -620,11 +571,7 @@ def test_draw_supports_layer_ceiling(mock_draw_pin):
 
 
 def test_draw_loads_layer():
-    """
-    Verifies that loads are correctly converted into vector arrows pointing 
-    at the nodes, that zero-loads are safely ignored, and that symbolic labels
-    are prioritized over numerical values.
-    """
+    """Draws load arrows at the nodes, skips zero loads and prefers symbolic labels."""
     fig, ax = plt.subplots()
     
     evaluated_nodes = {
@@ -637,7 +584,7 @@ def test_draw_loads_layer():
         "B": (0.0, 0.0)      # No force, should be completely skipped
     }
     
-    # NEW: Define the original symbolic loads to test the new label logic
+    # Original symbolic loads, used for the labels.
     original_loads = {
         "A": (0, "-P"),
         "B": (0, 0)
@@ -646,12 +593,9 @@ def test_draw_loads_layer():
     # Pass the new original_loads parameter
     draw_loads_layer(ax, evaluated_nodes, evaluated_loads, original_loads, scale_factor=1.0)
     
-    # 1. Assert exactly two objects were created (1 Annotation arrow, 1 Text label)
-    # Node B should have generated nothing.
     texts = ax.texts
     assert len(texts) == 2, "Should generate exactly one arrow and one label for Node A."
     
-    # 2. Separate the Annotation (arrow) from the standard Text (magnitude label)
     annotations = [t for t in texts if isinstance(t, Annotation)]
     standard_texts = [t for t in texts if not isinstance(t, Annotation)]
     
@@ -661,10 +605,6 @@ def test_draw_loads_layer():
     arrow = annotations[0]
     label = standard_texts[0]
     
-    # 3. Verify the Arrow Vector Math
-    # The force is down (-Y). To push ON the node at (0,0), the tail must sit ABOVE it.
-    # dx = 0, dy = -1.5 (since default scale_factor length is 1.5). 
-    # Tail = (x - dx, y - dy) = (0, 1.5)
     assert_allclose(arrow.xy, [0.0, 0.0], atol=1e-9)             # Tip exactly at node
     assert_allclose(arrow.get_position(), [0.0, 1.5], atol=1e-9) # Tail floating above
     
@@ -673,8 +613,6 @@ def test_draw_loads_layer():
     assert arrow.arrow_patch.get_facecolor() == expected_rgba
     assert arrow.arrow_patch.get_edgecolor() == expected_rgba
     
-    # 4. Verify the Magnitude Label Math
-    # NEW: Assert that the label successfully grabbed the symbolic "P" instead of "50"
     assert label.get_text() == "P"
     assert label.get_color() == '#cc0000'
     
@@ -685,11 +623,7 @@ def test_draw_loads_layer():
 
 
 def test_generate_truss_diagram_integration(tmp_path):
-    """
-    An end-to-end integration test. Verifies that the master orchestrator 
-    can process a raw, symbolic input dictionary and successfully output 
-    a high-resolution PNG file.
-    """
+    """Draws a symbolic truss end to end and saves a high-resolution PNG."""
     # Define a complete, simple bridge with symbolic variables
     nodes = {
         "A": (0, 0),
@@ -733,10 +667,8 @@ def test_generate_truss_diagram_integration(tmp_path):
     )
     
     # Assertions
-    # 1. Verify the file was actually created
     assert output_file.exists(), "The PNG file was not generated."
     
-    # 2. Verify the file is not completely empty (greater than 0 bytes)
     file_size = os.path.getsize(output_file)
     assert file_size > 0, "The generated PNG file is empty."
 
@@ -744,8 +676,10 @@ def test_generate_truss_diagram_integration(tmp_path):
 @pytest.fixture
 def sample_truss_data():
     """
-    Fixture providing the standard equilateral TRUSS_0001 dataset 
-    to be injected into the test.
+    Provides the TRUSS_0001 equilateral truss data (nodes, elements, loads, supports, metadata and substitutions).
+
+    Returns:
+        dict: The data, passed to the test as a fixture.
     """
     L = sp.Symbol('L', positive=True)
     P = sp.Symbol('P')
@@ -784,10 +718,7 @@ def sample_truss_data():
 
 
 def test_draw_truss_adapter_creates_file(sample_truss_data, tmp_path):
-    """
-    Integration test verifying that the adapter successfully routes data, 
-    creates the required directories, and generates a non-empty image file.
-    """
+    """The adapter creates the output folder and writes a non-empty image."""
     # Unpack the fixture data
     nodes, elements, loads, supports, metadata, subs_dict = sample_truss_data
     
@@ -795,7 +726,6 @@ def test_draw_truss_adapter_creates_file(sample_truss_data, tmp_path):
     # We create a sub-folder explicitly to test the os.makedirs logic in the adapter.
     test_output_dir = tmp_path / "test_outputs"
     
-    # 1. Execute the adapter
     draw_truss_adapter(
         nodes=nodes,
         elements_list=elements,
@@ -806,11 +736,9 @@ def test_draw_truss_adapter_creates_file(sample_truss_data, tmp_path):
         output_dir=str(test_output_dir)
     )
     
-    # 2. Define the expected file path based on the metadata
     expected_filename = f"{metadata['benchmark_id']}_truss_schematic.png"
     expected_filepath = test_output_dir / expected_filename
     
-    # 3. Assertions
     assert test_output_dir.exists(), "Adapter failed to create the target directory."
     assert expected_filepath.exists(), f"Adapter failed to save {expected_filename}."
     assert expected_filepath.stat().st_size > 0, "The generated image file is 0 bytes (empty)."

@@ -42,10 +42,8 @@ def test_are_collinear():
     el_left = {'nodes': (1, 3)}
     el_diag = {'nodes': (1, 4)}
     
-    # 1. 180 degrees apart (Straight line passing through node 1)
     assert are_collinear(1, el_right, el_left, nodes) is True
     
-    # 2. Not collinear
     assert are_collinear(1, el_right, el_diag, nodes) is False
 
 
@@ -74,4 +72,3 @@ def test_node_difficulty_scorer():
     # Error Case: Too many unknowns
     with pytest.raises(ValueError):
         get_node_difficulty_score(1, [el_horiz, el_diag1, el_diag2], nodes)
-

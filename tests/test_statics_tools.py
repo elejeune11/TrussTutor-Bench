@@ -11,10 +11,7 @@ from trusstutor_bench.statics_tools import programmatic_solution
 
 
 def test_solve_global_reactions_tool():
-    """
-    Verifies that the tool correctly solves for supports, mutates the state, 
-    and appends the correct pedagogical trace.
-    """
+    """Solves the support reactions, updates the state and logs the trace step."""
     L, P = sp.symbols('L P', positive=True)
     
     # Simple beam/truss layout: Pin at (0,0), Roller at (L,0), downward load P at L/2
@@ -33,13 +30,11 @@ def test_solve_global_reactions_tool():
     # Run the atomic tool
     solve_global_reactions_tool(state)
     
-    # 1. Verify State Mutation
     assert len(state.global_reactions) == 3
     assert state.global_reactions['R_1_x'] == 0
     assert state.global_reactions['R_1_y'] == P / 2
     assert state.global_reactions['R_2_y'] == P / 2
     
-    # 2. Verify Pedagogical Logging
     assert len(state.trace) == 1
     assert state.trace[0]['step_type'] == "Global Statics"
     assert state.trace[0]['target'] == "Entire Truss"
@@ -167,7 +162,7 @@ def test_identify_zfms_no_zfms():
 
 
 def test_identify_zfms_rule_2_alt_order():
-    """Hits the alternate 'elif' branches for T-Joint collinearity (Lines 139-140)."""
+    """Finds the T-joint zero-force member when the collinear pair comes in a different order."""
     # T-Joint at Node 1. Collinear members are horizontal.
     nodes = {1: (0, 0), 2: (10, 0), 3: (-10, 0), 4: (0, 10)}
     
@@ -188,7 +183,7 @@ def test_identify_zfms_rule_2_alt_order():
 
 
 def test_identify_zfms_rule_3_alt_order():
-    """Hits the alternate 'elif' branch for loaded joints (Lines 170-171)."""
+    """Finds the zero-force member of a collinear load when the members come in the other order."""
     nodes = {1: (0, 0), 2: (10, 0), 3: (0, 10)}
     
     # We purposefully place the vertical member FIRST.
@@ -277,7 +272,7 @@ def test_solve_single_joint_with_prior_knowledge():
 
 
 def test_solve_single_joint_known_members_and_y_reaction():
-    """Hits the R_y reaction branch and the known_elements loop (Lines 227-232)."""
+    """Includes a y reaction and already-solved members in the joint equilibrium."""
     nodes = {1: (0, 0), 2: (10, 0), 3: (0, 10)}
     elements = [
         {'id': 'A', 'nodes': (1, 2)}, # Unknown (Active)
@@ -301,7 +296,7 @@ def test_solve_single_joint_known_members_and_y_reaction():
 
 
 def test_solve_single_joint_singular_matrix():
-    """Hits the 'if not solution' singular matrix branch (Line 251)."""
+    """Returns False when the joint equations are singular."""
     nodes = {1: (0, 0), 2: (10, 0), 3: (-10, 0)}
     elements = [
         {'id': 'A', 'nodes': (1, 2)}, # Horizontal Right
@@ -394,7 +389,7 @@ def test_method_of_sections_missing_reactions():
 
 
 def test_method_of_sections_with_reactions_and_knowns():
-    """Hits reaction loops, known cut members, and reversed node order."""
+    """Includes reactions, already-known cut members and a reversed node order."""
     nodes = {1: (0, 0), 2: (10, 0), 3: (10, 10), 4: (0, 10)}
     elements = [
         # Reversed node order: n2 (1) is in the left sub-truss, n1 (2) is out
@@ -428,7 +423,7 @@ def test_method_of_sections_with_reactions_and_knowns():
 
 
 def test_method_of_sections_singular_matrix():
-    """Hits the singular matrix/inconsistent physics branch."""
+    """Returns False when the cut equations are singular or inconsistent."""
     # Two rectangular panels. Left side: 1, 2, 3. Right side: 4, 5, 6.
     nodes = {1: (0,0), 2: (0,5), 3: (0,10), 4: (10,0), 5: (10,5), 6: (10,10)}
     
@@ -457,7 +452,7 @@ def test_method_of_sections_singular_matrix():
 
 
 def test_method_of_sections_internal_cut_member():
-    """Hits the boundary 'else' branch (Line 373) for a completely internal cut member."""
+    """Returns False when a cut member lies completely inside one side."""
     # Build two triangles connected by two horizontal bridges
     nodes = {
         1: (0, 0), 2: (0, 10), 3: (5, 5),   # Left sub-truss
@@ -539,7 +534,7 @@ def test_autonomous_moj_macro_internally_indeterminate():
 
 
 def test_autonomous_moj_macro_global_reaction_failure():
-    """Hits the ValueError exception block (Lines 427-434) in the macro."""
+    """Logs an error step and returns False when the global reactions fail."""
     # Simple geometry, but with too many supports (Two pins = 4 unknowns)
     nodes = {1: (0, 0), 2: (10, 0)}
     elements = [{'id': 'A', 'nodes': (1, 2)}]
@@ -556,17 +551,31 @@ def test_autonomous_moj_macro_global_reaction_failure():
     assert state.trace[0]['step_type'] == "Error"
     assert "Global Reactions" in state.trace[0]['target']
 
-#######################################################################
-#######################################################################
-
 
 def helper_assert_close(val1, val2, tol=1e-5):
-    """Helper to handle type casting from SymPy expressions to float comparison."""
+    """
+    Asserts that two values, possibly SymPy expressions, are close when converted to float.
+
+    Args:
+        val1: First value.
+        val2: Second value.
+        tol (float): Absolute tolerance.
+    """
     assert abs(float(val1) - float(val2)) < tol
 
 
 def extract_dsm_reactions(nodes, supports, rx_array):
-    """Maps the flat 2N DSM reaction array into a pedagogical string-keyed dictionary."""
+    """
+    Converts the DSM reaction array into a dictionary keyed like 'R_A_x'.
+
+    Args:
+        nodes (dict): Node ID -> (x, y), in the order used for the array.
+        supports (dict): Node ID -> constrained directions.
+        rx_array (np.ndarray): Flat 2N reaction array.
+
+    Returns:
+        dict: Reaction name -> value.
+    """
     reactions_dict = {}
     node_list = list(nodes.keys()) # Assumes array ordering matches dict insertion order
     
@@ -578,9 +587,6 @@ def extract_dsm_reactions(nodes, supports, rx_array):
                 reactions_dict[f"R_{node_id}_y"] = rx_array[2 * i + 1]
                 
     return reactions_dict
-
-#######################################################################
-#######################################################################
 
 
 def test_dsm_vs_moj_simple_triangle():
@@ -596,22 +602,18 @@ def test_dsm_vs_moj_simple_triangle():
     supports = {1: ['x', 'y'], 2: ['y']}
     loads = {3: (100.0, -1000.0)}
 
-    # 1. Solve using the Direct Stiffness Method (Ground Truth)
     _, dsm_forces, dsm_rx_array = solve_truss(nodes, elements, supports, loads)
     dsm_reactions = extract_dsm_reactions(nodes, supports, dsm_rx_array)
 
-    # 2. Solve using the Pedagogical Statics Framework
     state = TrussState(nodes, elements, supports, loads)
     success = autonomous_moj_macro(state)
     
     assert success is True
 
-    # 3. Cross-validate global reactions
     for rx_key, r_val in dsm_reactions.items():
         assert rx_key in state.global_reactions
         helper_assert_close(state.global_reactions[rx_key], r_val)
 
-    # 4. Cross-validate internal member forces
     for eid, f_val in dsm_forces.items():
         assert eid in state.known_forces
         helper_assert_close(state.known_forces[eid], f_val)
@@ -626,7 +628,7 @@ def test_dsm_vs_zfms_by_inspection():
         {'id': 'B', 'nodes': (2, 4), **e_props},
         {'id': 'C', 'nodes': (2, 3), **e_props},  # Vertical ZFM at T-joint
         {'id': 'D', 'nodes': (1, 3), **e_props},
-        {'id': 'E', 'nodes': (3, 4), **e_props}   # <-- Stabilizing diagonal
+        {'id': 'E', 'nodes': (3, 4), **e_props}   # Stabilizing diagonal
     ]
     supports = {1: ['x', 'y'], 4: ['y']}
     loads = {3: (500.0, -500.0)}
@@ -678,10 +680,7 @@ def test_dsm_vs_method_of_sections():
 
 
 def test_dsm_vs_moj_irrational_geometry():
-    """
-    Tests if the solver survives geometries that result in repeating decimals (e.g. 1/3).
-    This forces the symbolic solver to handle irrational-looking floats.
-    """
+    """Solves a geometry with repeating decimals (e.g. 1/3) and matches the DSM."""
     # Placing a node at x=3.3333333333... forces the math to handle repeating decimals
     nodes = {1: (0, 0), 2: (10.0/3.0, 10.0), 3: (20.0/3.0, 0)}
     e_props = {'E': 200e9, 'A': 0.01}
@@ -693,10 +692,8 @@ def test_dsm_vs_moj_irrational_geometry():
     supports = {1: ['x', 'y'], 3: ['y']}
     loads = {2: (0, -100.0)}
 
-    # 1. DSM Truth
     _, dsm_forces, _ = solve_truss(nodes, elements, supports, loads)
 
-    # 2. Hybrid Symbolic Macro
     state = TrussState(nodes, elements, supports, loads)
     # The nsimplify logic inside the macro should catch the float noise 
     # from 10/3 and snap it to perfect fractions.
@@ -708,10 +705,7 @@ def test_dsm_vs_moj_irrational_geometry():
 
 
 def test_dsm_vs_moj_parametric_symbolic_load():
-    """
-    Tests that we maintain symbolic capabilities by using a SymPy Symbol as a load.
-    This proves we didn't break the parametric power while adding the float filter.
-    """
+    """Keeps a SymPy symbol as the load and matches the DSM once it is substituted."""
     nodes = {1: (0, 0), 2: (10, 0), 3: (5, 10)}
     e_props = {'E': 200e9, 'A': 0.01}
     elements = [
@@ -737,11 +731,7 @@ def test_dsm_vs_moj_parametric_symbolic_load():
 
 
 def test_dsm_vs_moj_trigonometric_geometry():
-    """
-    Tests the symbolic solver against a 30-60-90 triangle. 
-    This forces the use of sqrt(3) symbolic constants in all moment arms 
-    and force projections.
-    """
+    """Solves a 30-60-90 triangle, which needs sqrt(3) in the moment arms, and matches the DSM."""
     # Geometry: 30-60-90 triangle. Height = 5 * sqrt(3), Base = 5.
     # We use sp.sqrt(3) to keep it strictly symbolic.
     sqrt3 = sp.sqrt(3)
@@ -761,11 +751,8 @@ def test_dsm_vs_moj_trigonometric_geometry():
     supports = {1: ['x', 'y'], 2: ['y']}
     loads = {3: (100.0, -500.0)}
 
-    # 1. DSM Truth (Numerical)
     _, dsm_forces, _ = solve_truss(nodes, elements, supports, loads)
 
-    # 2. Hybrid Symbolic Macro
-    # By passing symbolic nodes, we ensure the solver doesn't just treat this as a decimal
     state = TrussState(nodes, elements, supports, loads)
     success = autonomous_moj_macro(state)
     
@@ -788,10 +775,7 @@ def test_dsm_vs_moj_trigonometric_geometry():
 
 
 def test_dsm_vs_moj_leaky_irrational_geometry():
-    """
-    Tests if the solver survives inputs that are truncated approximations 
-    of irrational numbers (e.g., 1.732 instead of sqrt(3)).
-    """
+    """Solves inputs truncated from irrational numbers (1.732 for sqrt(3)) and matches the DSM."""
     # 30-60-90 triangle with a "leaky" float approximation for sqrt(3)
     # 5 * 1.732 = 8.66
     nodes = {1: (0, 0), 2: (5, 0), 3: (2.5, 8.66)}
@@ -805,13 +789,8 @@ def test_dsm_vs_moj_leaky_irrational_geometry():
     supports = {1: ['x', 'y'], 2: ['y']}
     loads = {3: (100.0, -500.0)}
 
-    # 1. DSM Truth
-    # DSM will treat 8.66 as exactly 8.66.
     _, dsm_forces, _ = solve_truss(nodes, elements, supports, loads)
 
-    # 2. Hybrid Symbolic Macro
-    # The sanitization layer will call nsimplify(8.66), 
-    # which will convert it to the fraction 433/50.
     state = TrussState(nodes, elements, supports, loads)
     success = autonomous_moj_macro(state)
     
@@ -826,10 +805,7 @@ def test_dsm_vs_moj_leaky_irrational_geometry():
 
 
 def test_asymmetrical_roof_zfms():
-    """
-    Tests that the ZFM tool correctly identifies BH, DF, and CF as zero-force members
-    in an asymmetrically loaded roof truss, proving the cascade logic and collinearity checks.
-    """
+    """Finds BH, DF and CF as zero-force members in an asymmetrically loaded roof truss."""
     nodes = {
         "A": (0, 0), "B": (2.5, 0), "C": (5, 0), "D": (7.5, 0),
         "E": (10, 0), "F": (7.5, 2.5), "G": (5, 5), "H": (2.5, 2.5),
@@ -856,16 +832,12 @@ def test_asymmetrical_roof_zfms():
     elements = [{'id': eid, 'nodes': (n1, n2)} for eid, n1, n2 in connectivity]
     state = TrussState(nodes, elements, supports, loads)
     
-    # 1. Run the tool
     success = identify_zfms_by_inspection_tool(state)
 
-    # 2. Assert the tool reported making progress
     assert success is True, "The tool should have found ZFMs and returned True."
 
-    # 3. Assert exactly 3 members were solved (prevents over-eager zeroing)
     assert len(state.known_forces) == 3, f"Expected exactly 3 ZFMs, found {len(state.known_forces)}"
 
-    # 4. Assert the specific members are correctly logged and removed from active pool
     expected_zfms = ["BH", "DF", "CF"]
     for zfm in expected_zfms:
         assert zfm in state.known_forces, f"Failed to identify {zfm} as a ZFM."
@@ -874,11 +846,7 @@ def test_asymmetrical_roof_zfms():
 
 
 def test_method_of_sections_vs_dsm_benchmark():
-    """
-    Benchmarks the exact symbolic Method of Sections solver against the 
-    numerical Direct Stiffness Method (DSM) for a statically determinate roof truss.
-    """
-    # 1. Setup exact symbolic geometry
+    """Matches the method of sections to the DSM on a statically determinate roof truss."""
     theta = 20 * sp.pi / 180
 
     nodes = {
@@ -909,7 +877,6 @@ def test_method_of_sections_vs_dsm_benchmark():
     e_props = {'E': 200e9, 'A': 0.01}
     elements = [{'id': eid, 'nodes': (n1, n2), **e_props} for eid, n1, n2 in connectivity]
     
-    # 2. Execute Exact Symbolic Solution
     state = TrussState(nodes, elements, supports, loads)
     solve_global_reactions_tool(state)
     
@@ -921,10 +888,8 @@ def test_method_of_sections_vs_dsm_benchmark():
     for eid in cut_element_ids:
         assert eid in state.known_forces, f"Member {eid} was not found in known_forces."
 
-    # 3. Execute Numerical DSM Solution
     _, dsm_forces, _ = solve_truss(nodes, elements, supports, loads)
 
-    # 4. Benchmarking Assertions
     for eid in cut_element_ids:
         # Convert exact SymPy answer to decimal
         symbolic_force = float(state.known_forces[eid].evalf())
@@ -936,12 +901,7 @@ def test_method_of_sections_vs_dsm_benchmark():
 
 
 def test_autonomous_moj_vs_dsm_parametric_benchmark():
-    """
-    Benchmarks the fully autonomous Method of Joints macro against the DSM.
-    Demonstrates how to evaluate a parametric symbolic solution (using L) 
-    against a specific numerical instance.
-    """
-    # 1. Setup exact symbolic geometry
+    """Matches the method of joints with a symbolic length L to the DSM at a numeric value."""
     L = sp.Symbol('L', positive=True)
     nodes = {
         "a": (0, 0),
@@ -974,7 +934,6 @@ def test_autonomous_moj_vs_dsm_parametric_benchmark():
     e_props = {'E': 200e9, 'A': 0.01}
     elements = [{'id': eid, 'nodes': (n1, n2), **e_props} for eid, n1, n2 in connectivity]
     
-    # 2. Execute Exact Symbolic Solution
     state = TrussState(nodes, elements, supports, loads)
     solve_global_reactions_tool(state)
     success = autonomous_moj_macro(state)
@@ -982,8 +941,6 @@ def test_autonomous_moj_vs_dsm_parametric_benchmark():
     assert success is True, "MoJ macro failed to resolve the truss."
     assert len(state.active_element_ids) == 0, "Not all elements were solved."
 
-    # 3. Setup Numerical DSM Solution
-    # We must choose a specific value for L to run the numerical solver
     L_test_value = 10.0
     
     # Convert symbolic nodes to floating-point numerical nodes for the DSM engine
@@ -998,7 +955,6 @@ def test_autonomous_moj_vs_dsm_parametric_benchmark():
     # Execute DSM on the numerical geometry
     _, dsm_forces, _ = solve_truss(dsm_nodes, elements, supports, loads)
 
-    # 4. Benchmarking Assertions
     for eid in dsm_forces.keys():
         # Pull the exact formula (e.g., -500*sqrt(3)/9)
         symbolic_expr = state.known_forces[eid]
@@ -1013,7 +969,16 @@ def test_autonomous_moj_vs_dsm_parametric_benchmark():
 
 
 def dummy_initializer(sampled_vars, static_val):
-    """Acts as the creator. Returns a simple dictionary as the 'State'."""
+    """
+    Builds the initial state, a dictionary.
+
+    Args:
+        sampled_vars (dict): Sampled variables.
+        static_val: Fixed value stored in the state.
+
+    Returns:
+        dict: The state.
+    """
     return {
         "sampled_input": sampled_vars.get("P"),
         "static_input": static_val,
@@ -1021,18 +986,45 @@ def dummy_initializer(sampled_vars, static_val):
     }
 
 def dummy_mutator_success(state, step_name):
-    """Acts as a solver that succeeds. Mutates the state and returns True."""
+    """
+    Solver step that succeeds: records its name, marks the state solved and returns True.
+
+    Args:
+        state (dict): State, updated in place.
+        step_name (str): Name recorded in the trace.
+
+    Returns:
+        bool: True.
+    """
     state["execution_trace"].append(step_name)
     state["is_solved"] = True
     return True
 
 def dummy_mutator_failure(state, step_name):
-    """Acts as a solver that fails (e.g., singular matrix). Returns False."""
+    """
+    Solver step that fails: records its name and returns False.
+
+    Args:
+        state (dict): State, updated in place.
+        step_name (str): Name recorded in the trace.
+
+    Returns:
+        bool: False.
+    """
     state["execution_trace"].append(step_name)
     return False
 
 def dummy_extractor(state, target_key):
-    """Acts as the final step. Returns specific data from the state."""
+    """
+    Final step: returns a value from the state together with the trace.
+
+    Args:
+        state (dict): State.
+        target_key (str): Key to read from the state.
+
+    Returns:
+        dict: "extracted_value" and "trace".
+    """
     state["execution_trace"].append("extractor_ran")
     return {
         "extracted_value": state.get(target_key),
@@ -1040,15 +1032,8 @@ def dummy_extractor(state, target_key):
     }
 
 
-# =====================================================================
-# PYTEST SUITE
-# =====================================================================
-
 def test_programmatic_solution_happy_path():
-    """
-    Verifies that the orchestrator successfully unpacks arguments, mutates 
-    the state sequentially, and returns the expected ground truth.
-    """
+    """Passes the arguments to each step, updates the state in order and returns the expected result."""
     recipe = {
         1: {"function": dummy_initializer, "inputs": {"static_val": "Node_A"}},
         2: {"function": dummy_mutator_success, "inputs": {"step_name": "global_reactions"}},
@@ -1068,10 +1053,7 @@ def test_programmatic_solution_happy_path():
 
 
 def test_programmatic_solution_halts_on_failure():
-    """
-    Verifies that if a mutator returns False, the orchestrator immediately 
-    halts and raises a RuntimeError with the correct function name.
-    """
+    """Stops at the first failing step and raises RuntimeError naming that step."""
     recipe = {
         1: {"function": dummy_initializer, "inputs": {"static_val": "Node_A"}},
         2: {"function": dummy_mutator_success, "inputs": {"step_name": "step_1"}},
@@ -1087,10 +1069,7 @@ def test_programmatic_solution_halts_on_failure():
 
 
 def test_programmatic_solution_sorts_keys_correctly():
-    """
-    Verifies the orchestrator forces chronological execution based on integer 
-    keys, even if the dictionary was constructed out of order.
-    """
+    """Runs the steps in key order even if the recipe dictionary was built out of order."""
     # Keys are deliberately scrambled
     recipe = {
         99: {"function": dummy_extractor, "inputs": {"target_key": "static_input"}},

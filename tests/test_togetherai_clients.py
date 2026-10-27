@@ -1,4 +1,4 @@
-from llm_api.run_togetherai_client import build_togetherai_request, run_togetherai, build_togetherai_request_formative, run_togetherai_formative, clean_schema_for_togetherai, get_reasoning_effort, get_thinking_field
+from llm_api.run_togetherai_client import build_togetherai_request, run_togetherai, build_togetherai_request_formative, run_togetherai_formative, clean_schema_for_togetherai, get_formative_image_scale, TOGETHERAI_PIXEL_BUDGET
 from pathlib import Path
 import json
 import pytest
@@ -46,6 +46,7 @@ formative_payload_dict = {
 }
 
 def test_build_togetherai_request():
+    """Builds the baseline request with the model, token limit, reasoning settings and schema."""
 
     llm_model = "Kimi-K3"
     output_dict = build_togetherai_request(llm_model, payload_dict)
@@ -53,9 +54,9 @@ def test_build_togetherai_request():
     assert isinstance(output_dict, dict)
     assert len(output_dict) == 6
     assert output_dict["model"] == "Kimi-K3"
-    assert output_dict["max_tokens"] == 20000
+    assert output_dict["max_tokens"] == 64000
     assert output_dict["reasoning"] == {"enabled": True}
-    assert output_dict["reasoning_effort"] == "medium"
+    assert output_dict["reasoning_effort"] == "high"
     assert output_dict["messages"][0]["role"] == "user"
     assert output_dict["messages"][0]["content"][0]["type"] == "text"
     assert output_dict["messages"][0]["content"][0]["text"] == payload_dict["user_prompt"]
@@ -67,15 +68,16 @@ def test_build_togetherai_request():
 
 
 def test_build_togetherai_request_formative():
+    """Builds the formative request with the system prompt, the student work and the schema."""
 
     llm_model = "Kimi-K3"
     output_dict = build_togetherai_request_formative(llm_model, formative_payload_dict)
 
     assert isinstance(output_dict, dict)
     assert len(output_dict) == 6
-    assert output_dict["max_tokens"] == 20000
+    assert output_dict["max_tokens"] == 64000
     assert output_dict["reasoning"] == {"enabled": True}
-    assert output_dict["reasoning_effort"] == "medium"
+    assert output_dict["reasoning_effort"] == "high"
     assert output_dict["messages"][0]["role"] == "system"
     assert output_dict["messages"][0]["content"] == formative_payload_dict["system_prompt"]
     assert output_dict["messages"][1]["role"] == "user"
@@ -93,6 +95,7 @@ def test_build_togetherai_request_formative():
 
 
 async def test_run_togetherai(tmp_path):
+    """Returns the parsed JSON answer with token usage from a baseline call."""
 
     json_file = tmp_path/"togetherai_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -120,6 +123,7 @@ async def test_run_togetherai(tmp_path):
 
 
 async def test_run_togetherai_raises_on_empty_content(tmp_path):
+    """Raises RuntimeError when the response content is empty."""
 
     json_file = tmp_path/"togetherai_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -140,6 +144,7 @@ async def test_run_togetherai_raises_on_empty_content(tmp_path):
 
 
 async def test_run_togetherai_raises_on_whitespace_only_content(tmp_path):
+    """Raises RuntimeError when the response content is only whitespace."""
 
     json_file = tmp_path/"togetherai_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -160,6 +165,7 @@ async def test_run_togetherai_raises_on_whitespace_only_content(tmp_path):
 
 
 async def test_run_togetherai_raises_on_malformed_json_content(tmp_path):
+    """Raises RuntimeError with the raw content when it is not valid JSON."""
 
     json_file = tmp_path/"togetherai_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -180,6 +186,7 @@ async def test_run_togetherai_raises_on_malformed_json_content(tmp_path):
 
 
 async def test_run_togetherai_formative(tmp_path):
+    """Returns the parsed JSON answer with token usage from a formative call."""
 
     json_file = tmp_path/"togetherai_request.json"
     json_file.write_text(json.dumps(formative_payload_dict))
@@ -207,6 +214,7 @@ async def test_run_togetherai_formative(tmp_path):
 
 
 def test_clean_schema_for_togetherai_required_and_nullable():
+    """Turns nullable into a type union with null and keeps the required list."""
 
     schema = {
         "type": "object",
@@ -236,40 +244,64 @@ def test_clean_schema_for_togetherai_required_and_nullable():
     assert cleaned["additionalProperties"] is False
 
 
-def test_get_reasoning_effort_uses_override_for_deepseek():
+def test_reasoning_effort_constant_is_used(monkeypatch):
+    """Both request builders send the reasoning effort constant."""
+    monkeypatch.setattr("llm_api.run_togetherai_client.TOGETHERAI_REASONING_EFFORT", "medium")
 
-    assert get_reasoning_effort("deepseek-ai/DeepSeek-V4.1-Flash") == 50
-
-
-def test_get_reasoning_effort_uses_override_for_glm():
-
-    assert get_reasoning_effort("zai-org/GLM-5.3-Flash") == "high"
+    assert build_togetherai_request("zai-org/GLM-5.3-Flash", payload_dict)["reasoning_effort"] == "medium"
+    assert build_togetherai_request_formative("zai-org/GLM-5.3-Flash", formative_payload_dict)["reasoning_effort"] == "medium"
 
 
-def test_get_reasoning_effort_defaults_to_medium_for_other_models():
+def _make_png_base64(width, height):
+    """
+    Builds a white PNG of the given size.
 
-    assert get_reasoning_effort("MiniMaxAI/MiniMax-M3") == "medium"
+    Args:
+        width (int): Image width in pixels.
+        height (int): Image height in pixels.
 
-
-def test_get_thinking_field_uses_override_for_minimax():
-
-    assert get_thinking_field("MiniMaxAI/MiniMax-M3") == {"type": "enabled"}
-
-
-def test_get_thinking_field_defaults_to_none_for_other_models():
-
-    assert get_thinking_field("deepseek-ai/DeepSeek-V4.1-Flash") is None
-
-
-def test_build_togetherai_request_adds_thinking_field_for_minimax():
-
-    output_dict = build_togetherai_request("MiniMaxAI/MiniMax-M3", payload_dict)
-
-    assert output_dict["thinking"] == {"type": "enabled"}
+    Returns:
+        str: Base64-encoded PNG.
+    """
+    import base64, io
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def test_build_togetherai_request_omits_thinking_field_by_default():
+def test_get_formative_image_scale_is_one_for_small_payload():
+    """Leaves the scale at 1.0 for a small payload."""
 
-    output_dict = build_togetherai_request("Kimi-K3", payload_dict)
+    assert get_formative_image_scale([_make_png_base64(10, 10)] * 3) == 1.0
 
-    assert "thinking" not in output_dict
+
+def test_get_formative_image_scale_shrinks_large_payload_to_budget():
+    """Shrinks a large payload so the total pixel count fits the budget."""
+
+    images = [_make_png_base64(2000, 1000)] * 20
+    scale = get_formative_image_scale(images)
+
+    assert scale < 1.0
+    assert 20 * (2000 * scale) * (1000 * scale) <= TOGETHERAI_PIXEL_BUDGET * 1.01
+
+
+def test_build_togetherai_request_formative_keeps_total_pixels_under_budget():
+    """Keeps the total pixels of a formative request under the budget."""
+    import base64, io
+    from PIL import Image
+
+    big = _make_png_base64(2000, 1000)
+    payload = dict(formative_payload_dict)
+    payload["base_image_base64"] = big
+    payload["student_work"] = [{"type": "image", "content_base64": big} for _ in range(20)]
+
+    output_dict = build_togetherai_request_formative("zai-org/GLM-5.3-Flash", payload)
+
+    total_pixels = 0
+    for block in output_dict["messages"][1]["content"]:
+        if block["type"] == "image_url":
+            data = base64.b64decode(block["image_url"]["url"].split(",", 1)[1])
+            width, height = Image.open(io.BytesIO(data)).size
+            total_pixels += width * height
+    assert total_pixels <= TOGETHERAI_PIXEL_BUDGET * 1.01

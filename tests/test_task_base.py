@@ -3,8 +3,16 @@ from dataclasses import FrozenInstanceError
 from trusstutor_bench.task_base import BenchmarkTask
 
 
-# --- Helper to instantly create a mock module in memory ---
 def create_mock_module(**attributes):
+    """
+    Builds a mock module with the given attributes.
+
+    Args:
+        **attributes: Attributes to set on the module.
+
+    Returns:
+        type: Object carrying those attributes.
+    """
     return type('MockModule', (), attributes)
 
 

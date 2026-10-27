@@ -15,6 +15,7 @@ from trusstutor_bench.evaluate_outputs import (
 
 
 def test_compare_field_values_numbers():
+    """Numbers match within tolerance; different numbers and text fail."""
     schema = {"type": "number"}
     
     # Exact match
@@ -28,6 +29,7 @@ def test_compare_field_values_numbers():
 
 
 def test_compare_field_values_arrays():
+    """Arrays match regardless of order and fail when elements differ."""
     schema = {"type": "array"}
     
     # Exact match, same order
@@ -43,6 +45,7 @@ def test_compare_field_values_arrays():
 
 
 def test_compare_field_values_strings():
+    """Strings match ignoring case and whitespace; different units fail."""
     schema = {"type": "string"}
     
     # Exact match
@@ -57,7 +60,50 @@ def test_compare_field_values_strings():
     assert compare_field_values("kN", 100, schema) is False
 
 
+def test_compare_field_values_member_name_strips_latex_wrapping():
+    """Member names ignore '$...$' wrapping and member direction."""
+    schema = {"type": "string"}
+
+    # Model wraps the member name in LaTeX math mode ("$AB$") -- semantically
+    # identical to the plain "AB" ground truth.
+    assert compare_field_values("AB", "$AB$", schema, field_name="controlling_member") is True
+    # Direction still shouldn't matter once the LaTeX wrapping is stripped.
+    assert compare_field_values("AB", "$BA$", schema, field_name="controlling_member") is True
+    # A genuinely different member is still a real failure.
+    assert compare_field_values("AB", "$CD$", schema, field_name="controlling_member") is False
+
+
+def test_compare_field_values_units_tolerates_trailing_explanation():
+    """A units answer with extra commentary is accepted when it contains the right unit."""
+    schema = {"type": "string"}
+
+    # Model states the correct unit but pads it with harmless commentary,
+    # either after it or as a lead-in before it.
+    assert compare_field_values("kN", "kN (positive = tension, negative = compression)", schema, field_name="units") is True
+    assert compare_field_values("P", "P (multiples of the applied load P)", schema, field_name="units") is True
+    assert compare_field_values("P", "Multiples of the applied load P", schema, field_name="units") is True
+    assert compare_field_values("kips", "kips (k)", schema, field_name="units") is True
+    # lb/lbs are used interchangeably across this dataset's pound-based tasks.
+    assert compare_field_values("lbs", "lb", schema, field_name="units") is True
+    assert compare_field_values("lb", "lbs", schema, field_name="units") is True
+    assert compare_field_values("lb", "pounds", schema, field_name="units") is True
+    assert compare_field_values("lbs", "kg", schema, field_name="units") is False
+
+    # A genuinely wrong unit must still fail, even when it's a substring of
+    # the other (a real 1000x order-of-magnitude error, not a formatting
+    # difference) -- word-boundary matching keeps this safe.
+    assert compare_field_values("N", "kN", schema, field_name="units") is False
+    assert compare_field_values("kN", "N", schema, field_name="units") is False
+    # Unrelated commentary with no real unit match anywhere.
+    assert compare_field_values("N", "Cannot be determined from the drawing.", schema, field_name="units") is False
+
+    # This leniency is scoped to the "units" field only -- an ordinary
+    # string field with the same text should not get the same pass.
+    assert compare_field_values("kN", "kN (positive = tension, negative = compression)", schema) is False
+
+
 def test_evaluate_single_task_perfect_match():
+    """A fully correct answer passes, and the scratchpad is ignored."""
     schema = {
         "properties": {
             "chain_of_thought": {"type": "string"},
@@ -81,6 +127,7 @@ def test_evaluate_single_task_perfect_match():
 
 
 def test_evaluate_single_task_partial_failure():
+    """One wrong field fails the task, while the correct field still passes."""
     schema = {
         "properties": {
             "max_compression": {"type": "number"},
@@ -101,6 +148,7 @@ def test_evaluate_single_task_partial_failure():
 
 
 def test_evaluate_single_task_missing_key():
+    """A missing field fails with the reason 'Missing key in prediction'."""
     schema = {
         "properties": {
             "max_compression": {"type": "number"},
@@ -123,22 +171,18 @@ def test_evaluate_single_task_missing_key():
 
 def test_evaluate_single_task_real_example():
     """
-    Tests the evaluation logic using the actual payload and LLM response 
-    generated for TRUSS_0001.
+    Grades the sample payload for TRUSS_0001 against its fixture response in
+    tests/llm_outputs/, which is the ground-truth answer.
     """
-    # 1. Resolve paths based on the project structure
-    # Assuming this test file is located inside the 'tests' directory
     current_dir = Path(__file__).parent
     project_root = current_dir.parent
     
     payload_path = project_root / "prompts" / "TRUSS_0001_payload.json"
     response_path = current_dir / "llm_outputs" / "TRUSS_0001_response.json"
     
-    # 2. Skip the test gracefully if the pipeline hasn't been executed yet
     if not payload_path.exists() or not response_path.exists():
         pytest.skip(f"Required artifacts for TRUSS_0001 not found. Please run the pipeline first.")
         
-    # 3. Load the artifacts from disk
     with open(payload_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
         
@@ -148,16 +192,13 @@ def test_evaluate_single_task_real_example():
     schema = payload["structured_schema"]
     ground_truth = payload["ground_truth"]
     
-    # 4. Execute the evaluator
     result = evaluate_single_task(ground_truth, prediction, schema)
     
-    # 5. Verify the scorecard structure
     assert isinstance(result, dict)
     assert "passed" in result
     assert isinstance(result["passed"], bool)
     assert "fields" in result
     
-    # 6. Ensure every expected field (except the scratchpad) was graded
     expected_keys = [k for k in schema.get("properties", {}) if k != "chain_of_thought"]
     
     for key in expected_keys:
@@ -169,16 +210,11 @@ def test_evaluate_single_task_real_example():
         assert "ground_truth" in field_score
         assert "prediction" in field_score
         
-    # 7. Ensure the internal reasoning scratchpad was properly ignored
     assert "chain_of_thought" not in result["fields"]
 
 
 def test_generate_minimal_report(tmp_path):
-    """
-    Tests that the minimal report generator correctly calculates aggregates
-    and writes the expected JSON structure to disk.
-    """
-    # 1. Setup mock evaluation results (3 passed, 1 failed)
+    """Computes the pass count and accuracy and writes the report JSON."""
     mock_results = {
         "TRUSS_0001": {"passed": True, "fields": {}},
         "TRUSS_0002": {"passed": False, "fields": {}},
@@ -186,16 +222,12 @@ def test_generate_minimal_report(tmp_path):
         "TRUSS_0004": {"passed": True, "fields": {}}
     }
     
-    # 2. Define a temporary file path
     report_file = tmp_path / "test_evaluation_report.json"
     
-    # 3. Execute the function
     generate_minimal_report(mock_results, report_file)
     
-    # 4. Assert the file was successfully created
     assert report_file.exists(), "The report file was not created."
     
-    # 5. Read the file back and verify the data
     with open(report_file, "r", encoding="utf-8") as f:
         saved_report = json.load(f)
         
@@ -215,18 +247,13 @@ def test_generate_minimal_report(tmp_path):
 
 
 def test_evaluate_outputs_minimal_integration(tmp_path):
-    """
-    Tests the full evaluation orchestrator by generating mock directories, 
-    payloads, and responses, and verifying the pipeline executes end-to-end.
-    """
-    # 1. Setup mock directories inside the temporary Pytest environment
+    """Grades mock payloads and responses end to end and writes the report."""
     prompts_dir = tmp_path / "prompts"
     outputs_dir = tmp_path / "llm_outputs"
     prompts_dir.mkdir()
     outputs_dir.mkdir()
     report_path = tmp_path / "evaluation_report.json"
     
-    # 2. Create a mock payload with embedded ground truth
     mock_payload = {
         "benchmark_id": "TRUSS_9999",
         "structured_schema": {
@@ -243,7 +270,6 @@ def test_evaluate_outputs_minimal_integration(tmp_path):
     with open(prompts_dir / "TRUSS_9999_payload.json", "w", encoding="utf-8") as f:
         json.dump(mock_payload, f)
         
-    # 3. Create a mock LLM prediction
     mock_prediction = {
         "max_compression": 100.0,
         "units": "kn" # Should pass due to string case-normalization
@@ -251,14 +277,11 @@ def test_evaluate_outputs_minimal_integration(tmp_path):
     with open(outputs_dir / "TRUSS_9999_response.json", "w", encoding="utf-8") as f:
         json.dump(mock_prediction, f)
         
-    # 4. Execute the orchestrator
     results = evaluate_outputs_minimal(prompts_dir, outputs_dir, report_path)
     
-    # 5. Assert the return object contains the graded task
     assert "TRUSS_9999" in results
     assert results["TRUSS_9999"]["passed"] is True
     
-    # 6. Assert the report generator was successfully triggered and wrote the file
     assert report_path.exists()
     
     with open(report_path, "r", encoding="utf-8") as f:
@@ -271,21 +294,17 @@ def test_evaluate_outputs_minimal_integration(tmp_path):
 
 def test_evaluate_outputs_minimal_real_examples(tmp_path):
     """
-    Tests the full evaluation orchestrator using the actual generated payloads 
-    and LLM responses located in the project repository.
+    Runs the evaluation orchestrator on the sample payloads in prompts/ and the
+    fixture responses in tests/llm_outputs/ (ground-truth answers).
     """
-    # 1. Resolve paths to the real project directories
-    # Assuming this test file is located inside the 'tests' directory
     current_dir = Path(__file__).parent
     project_root = current_dir.parent
     
     prompts_dir = project_root / "prompts"
     outputs_dir = current_dir / "llm_outputs"
     
-    # 2. Output the report to a temporary directory to avoid overwriting production data
     report_path = tmp_path / "test_real_evaluation_report.json"
     
-    # 3. Skip gracefully if the user hasn't generated the real pipeline artifacts yet
     if not prompts_dir.exists() or not outputs_dir.exists():
         pytest.skip("Real prompt or output directories not found. Please run the pipeline first.")
         
@@ -295,10 +314,8 @@ def test_evaluate_outputs_minimal_real_examples(tmp_path):
     if not payload_files or not response_files:
         pytest.skip("Real payloads or responses are missing. Please run the pipeline first.")
         
-    # 4. Execute the orchestrator
     results = evaluate_outputs_minimal(prompts_dir, outputs_dir, report_path)
     
-    # 5. Basic assertions on the returned results dictionary
     assert isinstance(results, dict)
     assert len(results) > 0, "No tasks were evaluated."
     
@@ -307,10 +324,8 @@ def test_evaluate_outputs_minimal_real_examples(tmp_path):
     assert "passed" in results["TRUSS_0001"]
     assert "fields" in results["TRUSS_0001"]
     
-    # 6. Assert the JSON report was successfully generated on disk
     assert report_path.exists(), "Evaluation report was not created."
     
-    # 7. Validate the structure of the saved report
     with open(report_path, "r", encoding="utf-8") as f:
         saved_report = json.load(f)
         
@@ -324,44 +339,33 @@ def test_evaluate_outputs_minimal_real_examples(tmp_path):
 
 
 def test_evaluate_formative_task():
-    """
-    Validates that the formative task evaluator correctly grades the LLM's 
-    prediction of both correctness and error step localization against ground truth.
-    """
+    """Grades both the correctness judgement and the error step number."""
     # Define Ground Truth states
     gt_flawless = {"is_work_correct": True, "error_step_number": None}
     gt_flawed = {"is_work_correct": False, "error_step_number": 2}
 
-    # 1. Test True Positive (Model correctly identifies flawless work)
     pred_flawless = {"is_work_correct": True, "error_step_number": None}
     res_tp = evaluate_formative_task(pred_flawless, gt_flawless)
     assert res_tp["passed"] is True
     
-    # 2. Test False Negative (Model hallucinated an error in flawless work)
     pred_hallucinated_error = {"is_work_correct": False, "error_step_number": 2}
     res_fn = evaluate_formative_task(pred_hallucinated_error, gt_flawless)
     assert res_fn["passed"] is False
 
-    # 3. Test True Negative (Model correctly identifies flawed work AND exact step)
     pred_correct_detection = {"is_work_correct": False, "error_step_number": 2}
     res_tn = evaluate_formative_task(pred_correct_detection, gt_flawed)
     assert res_tn["passed"] is True
 
-    # 4. Test False Positive (Model rubber-stamped flawed work)
     res_fp = evaluate_formative_task(pred_flawless, gt_flawed)
     assert res_fp["passed"] is False
     
-    # 5. Test Localization Failure (Model knows it's flawed, but picks the wrong step)
     pred_wrong_step = {"is_work_correct": False, "error_step_number": 3}
     res_loc_fail = evaluate_formative_task(pred_wrong_step, gt_flawed)
     assert res_loc_fail["passed"] is False
 
 
 def test_evaluate_outputs_formative_integration(tmp_path):
-    """
-    Tests the formative orchestrator using mock directories, payloads, and responses.
-    """
-    # 1. Setup mock directories
+    """Grades mock formative payloads and responses for one posture."""
     prompts_dir = tmp_path / "prompts_formative"
     outputs_dir = tmp_path / "llm_outputs_formative"
     prompts_dir.mkdir()
@@ -370,7 +374,6 @@ def test_evaluate_outputs_formative_integration(tmp_path):
     
     benchmark_id = "TRUSS_0001"
     
-    # 2. Create a mock payload (Required so the evaluator can read posture & ground truth)
     mock_payload = {
         "benchmark_id": benchmark_id,
         "posture_type": "posture_1",
@@ -382,7 +385,6 @@ def test_evaluate_outputs_formative_integration(tmp_path):
     with open(prompts_dir / f"{benchmark_id}_payload.json", "w", encoding="utf-8") as f:
         json.dump(mock_payload, f)
         
-    # 3. Create a mock LLM prediction (Response)
     mock_prediction = {
         "is_work_correct": True,
         "error_step_number": None,
@@ -391,14 +393,11 @@ def test_evaluate_outputs_formative_integration(tmp_path):
     with open(outputs_dir / f"{benchmark_id}_response.json", "w", encoding="utf-8") as f:
         json.dump(mock_prediction, f)
         
-    # 4. Execute the orchestrator (targeting posture_1)
     results = evaluate_outputs_formative(prompts_dir, outputs_dir, "posture_1", report_path)
     
-    # 5. Assert the return object contains the graded task
     assert benchmark_id in results
     assert results[benchmark_id]["passed"] is True
     
-    # 6. Assert the report was generated and calculated correctly
     assert report_path.exists()
     
     with open(report_path, "r", encoding="utf-8") as f:
@@ -409,14 +408,10 @@ def test_evaluate_outputs_formative_integration(tmp_path):
 
 
 def test_cross_evaluate_2x2_matrix(tmp_path):
-    """
-    Verifies that the cross-evaluator correctly matches benchmark IDs across 
-    both reports and accurately sorts them into the 4 quadrants of the 2x2 matrix.
-    """
+    """Matches task IDs across both reports and sorts them into the four quadrants."""
     baseline_report_path = tmp_path / "baseline_report.json"
     formative_report_path = tmp_path / "formative_report.json"
     
-    # 1. Setup Mock Baseline Report
     baseline_data = {
         "detailed_results": {
             "TRUSS_0001": {"passed": True},   # Will be Baseline Pass / Formative Pass
@@ -429,7 +424,6 @@ def test_cross_evaluate_2x2_matrix(tmp_path):
     with open(baseline_report_path, "w") as f:
         json.dump(baseline_data, f)
         
-    # 2. Setup Mock Formative Report
     formative_data = {
         "detailed_results": {
             "TRUSS_0001_formative_posture_1": {"passed": True},
@@ -442,10 +436,8 @@ def test_cross_evaluate_2x2_matrix(tmp_path):
     with open(formative_report_path, "w") as f:
         json.dump(formative_data, f)
         
-    # 3. Execute Cross-Evaluation
     matrix = cross_evaluate_2x2_matrix(baseline_report_path, formative_report_path)
     
-    # 4. Verify Quadrants
     assert "TRUSS_0001" in matrix["baseline_pass_formative_pass"]
     assert len(matrix["baseline_pass_formative_pass"]) == 1
     
@@ -458,17 +450,13 @@ def test_cross_evaluate_2x2_matrix(tmp_path):
     assert "TRUSS_0004" in matrix["baseline_fail_formative_fail"]
     assert len(matrix["baseline_fail_formative_fail"]) == 1
     
-    # 5. Verify un-matched tasks are cleanly dropped
     all_matrix_ids = sum(matrix.values(), [])
     assert "TRUSS_0005" not in all_matrix_ids
     assert "TRUSS_0006" not in all_matrix_ids
 
 
 def test_print_2x2_summary(capsys):
-    """
-    Verifies that the formatting function successfully prints the 2x2 table 
-    to the terminal without crashing.
-    """
+    """Prints the 2x2 table without crashing."""
     mock_matrix = {
         "baseline_pass_formative_pass": ["1", "2"],
         "baseline_pass_formative_fail": ["3"],

@@ -8,11 +8,23 @@ from PIL import Image
 OPENAI_IMAGE_RAW_SIZE_LIMIT = 20_000_000
 OPENAI_IMAGE_MAX_DIMENSION = 2048
 
+# Reasoning tokens share this budget, so a low cap can end a response before the answer.
+OPENAI_MAX_OUTPUT_TOKENS = 20000
+
+# Reasoning effort sent with every request.
+OPENAI_REASONING_EFFORT = "high"
+
+
 def prepare_image_for_openai(image_base64: str) -> str:
-    
     """
-    Returns a data-URI string ("data:image/<format>;base64,<data>") safe for
-    OpenAI's Responses API, which takes the image as a single string.
+    Returns the image as a data URI, resized to JPEG if it exceeds OpenAI's
+    size or dimension limit.
+
+    Args:
+        image_base64 (str): Base64-encoded image.
+
+    Returns:
+        str: Data URI ("data:image/<format>;base64,<data>").
     """
     image_bytes = base64.b64decode(image_base64)
     img = Image.open(io.BytesIO(image_bytes))
@@ -35,9 +47,13 @@ def prepare_image_for_openai(image_base64: str) -> str:
 
 def dedupe_schema_for_openai(schema: dict) -> dict:
     """
-    Collapses sibling properties that share a byte-identical sub-schema into
-    a single shared definition referenced via $ref, instead of N duplicated
-    inline copies.
+    Replaces repeated identical sub-schemas with one shared $ref definition.
+
+    Args:
+        schema (dict): JSON Schema.
+
+    Returns:
+        dict: Schema with a "$defs" section holding the shared definitions.
     """
     defs: dict = {}
     deduped = _dedupe_repeated_subschemas(schema, defs)
@@ -48,6 +64,13 @@ def dedupe_schema_for_openai(schema: dict) -> dict:
 def _dedupe_repeated_subschemas(schema, defs: dict):
     """
     Recursive helper for dedupe_schema_for_openai.
+
+    Args:
+        schema: Schema or sub-schema.
+        defs (dict): Shared definitions, filled in place.
+
+    Returns:
+        The schema with repeated property schemas replaced by $ref.
     """
     if not isinstance(schema, dict):
         return schema
@@ -87,7 +110,12 @@ def _dedupe_repeated_subschemas(schema, defs: dict):
     return result
 
 def _union_type_with_null(prop_schema: dict) -> None:
-    """Mutates prop_schema["type"] in place to also allow "null"."""
+    """
+    Allows "null" in prop_schema["type"], in place.
+
+    Args:
+        prop_schema (dict): Schema with a "type" key.
+    """
     original_type = prop_schema["type"]
     if isinstance(original_type, list):
         if "null" not in original_type:
@@ -97,8 +125,14 @@ def _union_type_with_null(prop_schema: dict) -> None:
 
 def clean_schema_for_openai(schema: dict) -> dict:
     """
-    Translates this project's "nullable" flag into a 
-    real type union and forces additionalProperties: false.
+    Prepares a schema for OpenAI strict mode: "nullable" becomes a type union
+    with "null", every property is required, additionalProperties is false.
+
+    Args:
+        schema (dict): JSON Schema.
+
+    Returns:
+        dict: Cleaned copy of the schema.
     """
     if not isinstance(schema, dict):
         return schema
@@ -138,25 +172,23 @@ def clean_schema_for_openai(schema: dict) -> dict:
     return cleaned
 
 def build_openai_request(llm_model: str, payload: dict) -> dict:
-
     """
-    Build a request dictionary for the OpenAI Responses API based on the
-    provided payload.
+    Builds the Responses API request for a baseline payload.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        payload (dict): A dictionary containing the benchmark ID,
-        user prompt, image in base64 format, and structured schema.
+        llm_model (str): Model ID.
+        payload (dict): Payload with the prompt, base64 image and schema.
 
     Returns:
-        dict: A dictionary formatted for the OpenAI Responses API request.
+        dict: Request for the OpenAI Responses API.
     """
 
     image_data_uri = prepare_image_for_openai(payload["image_base64"])
 
     request_dict = {
         "model": llm_model,
-        "max_output_tokens": 20000,
+        "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
+        "reasoning": {"effort": OPENAI_REASONING_EFFORT},
         "input": [
             {
                 "role": "user",
@@ -185,42 +217,36 @@ def build_openai_request(llm_model: str, payload: dict) -> dict:
     return request_dict
 
 async def run_openai(llm_model: str, json_file_path: Path) -> dict:
-
     """
-    Run the OpenAI API using the provided JSON file path.
+    Sends a baseline payload to OpenAI and returns the parsed JSON answer.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        json_file_path (Path): Path to the JSON file containing the request payload.
+        llm_model (str): Model ID.
+        json_file_path (Path): Path to the payload JSON file.
 
     Returns:
-        dict: The response from the OpenAI API.
+        dict: The answer, with a "_usage" entry holding tokens, input tokens and status.
     """
 
-    # Load the request payload from the JSON file
     with open(json_file_path, 'r') as f:
         payload = json.load(f)
 
-    # Build the request for the OpenAI API
     openai_request = build_openai_request(llm_model, payload)
 
-    # Initialize the OpenAI client
     client = AsyncOpenAI()
 
-    # Send the request and get the response
     response = await client.responses.create(**openai_request)
 
-    # Extract usage and status from the response
     tokens_usage = response.usage.output_tokens
     status = response.status
 
-    # Extract the message item. 
     message_item = next(item for item in response.output if item.type == "message")
     text_block = next(block for block in message_item.content if block.type == "output_text")
     model_response = json.loads(text_block.text)
 
     model_response["_usage"] = {
         "tokens": tokens_usage,
+        "input_tokens": response.usage.input_tokens,
         "status": status
     }
 
@@ -228,15 +254,15 @@ async def run_openai(llm_model: str, json_file_path: Path) -> dict:
 
 def build_openai_request_formative(llm_model: str, formative_payload: dict) -> dict:
     """
-    Build a request dictionary for the OpenAI Responses API based on the
-    provided formative payload.
+    Builds the Responses API request for a formative payload.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        formative_payload (dict): A dictionary containing the system prompt.
+        llm_model (str): Model ID.
+        formative_payload (dict): Payload with the system prompt, base image,
+            student work (text and image blocks) and schema.
 
     Returns:
-        dict: A dictionary formatted for the OpenAI Responses API request.
+        dict: Request for the OpenAI Responses API.
     """
 
     base_image_data_uri = prepare_image_for_openai(formative_payload["base_image_base64"])
@@ -260,7 +286,8 @@ def build_openai_request_formative(llm_model: str, formative_payload: dict) -> d
 
     request_dict = {
         "model": llm_model,
-        "max_output_tokens": 20000,
+        "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
+        "reasoning": {"effort": OPENAI_REASONING_EFFORT},
         "instructions": formative_payload["system_prompt"],
         "input": [
             {
@@ -281,42 +308,36 @@ def build_openai_request_formative(llm_model: str, formative_payload: dict) -> d
     return request_dict
 
 async def run_openai_formative(llm_model: str, json_file_path: Path) -> dict:
-
     """
-    Run the OpenAI API for a formative assessment using the provided JSON file path.
+    Sends a formative payload to OpenAI and returns the parsed JSON answer.
 
     Args:
-        llm_model (str): The name of the LLM model to use.
-        json_file_path (Path): Path to the JSON file containing the formative request payload.
+        llm_model (str): Model ID.
+        json_file_path (Path): Path to the formative payload JSON file.
 
     Returns:
-        dict: The response from the OpenAI API.
+        dict: The answer, with a "_usage" entry holding tokens, input tokens and status.
     """
 
-    # Load the formative request payload from the JSON file
     with open(json_file_path, 'r') as f:
         formative_payload = json.load(f)
 
-    # Build the request for the OpenAI API
     openai_request = build_openai_request_formative(llm_model, formative_payload)
 
-    # Initialize the OpenAI client
     client = AsyncOpenAI()
 
-    # Send the request and get the response
     response = await client.responses.create(**openai_request)
 
-    # Extract usage and status from the response
     tokens_usage = response.usage.output_tokens
     status = response.status
 
-    # Extract the message item
     message_item = next(item for item in response.output if item.type == "message")
     text_block = next(block for block in message_item.content if block.type == "output_text")
     model_response = json.loads(text_block.text)
 
     model_response["_usage"] = {
         "tokens": tokens_usage,
+        "input_tokens": response.usage.input_tokens,
         "status": status
     }
 

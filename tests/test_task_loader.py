@@ -2,7 +2,6 @@ import pytest
 from pathlib import Path
 from trusstutor_bench.task_loader import TaskLoader
 
-# --- MOCK TEMPLATE STRINGS ---
 
 VALID_TEMPLATE = """
 METADATA = {
@@ -49,7 +48,6 @@ def some_helper_function():
     return True
 """
 
-# --- TEST CASES ---
 
 def test_load_directory_success(tmp_path: Path):
     """Test that a perfectly formatted template loads and registers successfully."""
@@ -112,7 +110,7 @@ def test_load_real_examples_directory():
     """Test that the loader correctly parses the core benchmark example files."""
     # Resolve the absolute path to the 'examples' folder next to this test file
     current_dir = Path(__file__).parent
-    examples_dir = current_dir / "examples"
+    examples_dir = current_dir.parent / "tasks"
     
     # Ensure the directory exists before attempting to load
     assert examples_dir.exists(), f"Expected examples directory at {examples_dir}"

@@ -3,9 +3,8 @@ import numpy as np
 import os
 import sympy as sp
 
-# trusstutor_support_code tools
+# trusstutor_bench tools
 from trusstutor_bench.truss_state import TrussState
-from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
 from trusstutor_bench.statics_tools import (
     autonomous_moj_macro,
     identify_zfms_by_inspection_tool,
@@ -15,6 +14,8 @@ from trusstutor_bench.statics_tools import (
     programmatic_solution
 )
 from trusstutor_bench.draw_truss import draw_truss_adapter
+from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
+
 
 #############################################################
 # PROBLEM DEFINITION TEMPLATE
@@ -28,38 +29,40 @@ from trusstutor_bench.draw_truss import draw_truss_adapter
 
 METADATA = {
     "benchmark_id": "TRUSS_0005",
-    "topic": ["find_unknown_load_or_dimension"],
+    "topic": ["method_of_joints"],
     "DEFAULT_RANDOM_SEED": 11,
-    "task_creator": "elejeune11",
-    "source_type": "textbook",
-    "source_name": "Engineering Statics Open and Interactive, Baker and Haynes",
-    "source_problem_pointer": ["https://engineeringstatics.org/Chapter_06-10.html"],
+    "task_creator": "eapostolakis99",
+    "source_type": "original",
+    "source_name": "eapostolakis99 handwritten",
+    "source_problem_pointer": [""],
 }
+
 
 #############################################################
 # SYMBOLIC DEFINITIONS
 #############################################################
 
-m = sp.Symbol("m", positive=True)
+L = sp.Symbol('L', positive=True)
+P = sp.Symbol('P')
 
-SYMBOLIC_DEFINITIONS = [m]
+SYMBOLIC_DEFINITIONS = [L, P]
 
 #############################################################
 # NODES
 #############################################################
 
-# Maintain pure SymPy exactness to prevent floating point drift
-theta = sp.atan(sp.Rational(4, 10))
-phi = sp.pi / 4 - theta
-L_geom = 4 * sp.sqrt(2) * sp.cos(phi)
-
 NODES = {
-    "A": (0, 6),
-    "B": (0, 0),
-    "C": (10, 10),
-    "D": (10 - sp.cos(theta) * L_geom, 10 - sp.sin(theta) * L_geom),
-    "E": (3, 3),
-    "F": (6, 6)
+    "A": (0, L),
+    "B": (4 * L, L),
+    "C": (L, 0),
+    "D": (2 * L, 0),
+    "E": (3 * L, 0),
+    "F": (L, L),
+    "G": (2 * L, L),
+    "H": (3 * L, L),
+    "I": (L, 2 * L),
+    "K": (2 * L, 3 * L),
+    "L": (3 * L, 2 * L)
 }
 
 #############################################################
@@ -69,15 +72,25 @@ NODES = {
 DEFAULT_PROPS = {'E': 1.0, 'A': 1.0}
 
 connectivity = [
-    ('AB', 'A', 'B'),
-    ('BE', 'B', 'E'),
-    ('AE', 'A', 'E'),
-    ('AF', 'A', 'F'),
-    ('EF', 'E', 'F'),
-    ('AD', 'A', 'D'),
-    ('DF', 'D', 'F'),
-    ('CF', 'C', 'F'),
-    ('CD', 'C', 'D')
+    ("AC", "A", "C"),
+    ('AF', "A", "F"),
+    ('AI', "A", "I"),
+    ('BE', "B", "E"),
+    ('BH', "B", "H"),
+    ('BL', "B", "L"),
+    ('CD', "C", "D"),
+    ('CF', "C", "F"),
+    ('CG', "C", "G"),
+    ('DG', "D", "G"),
+    ('DE', "D", "E"),
+    ('EG', "E", "G"),
+    ('EH', "E", "H"),
+    ('FG', "F", "G"),
+    ('FI', "F", "I"),
+    ('GH', "G", "H"),
+    ('HL', "H", "L"),
+    ('IK', "I", "K"),
+    ('KL', "K", "L"),
 ]
 
 ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in connectivity]
@@ -87,8 +100,11 @@ ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in c
 #############################################################
 
 LOADS = {
-    "C": (-1 * m * 9.81, -1 * m * 9.81)
+    "F": (0, -P),
+    "G": (0, -P),
+    "H": (0, -P)
 }
+
 
 #############################################################
 # SUPPORTS
@@ -96,49 +112,61 @@ LOADS = {
 
 SUPPORTS = {
     "A": ['x', 'y'],
-    "B": ['x']  # Horizontally constrained roller
+    "B": ['y']
 }
 
 #############################################################
 # PROBLEM STATEMENT
 #############################################################
 
+
 PROBLEM_SCHEMA = {
     "template": (
-        "Determine the maximum mass m which may be applied to the truss without "
-        "exceeding {max_tension} kN in tension or {max_compression} kN in compression in any member."
-        "Identify the maximum allowable mass, the critical member that governs this limit, "
-        "and whether that member is in tension or compression."
+        "A statically determinate truss is supported by a pin at A and a roller at B. "
+        "Downward loads of {P} {force_unit} are applied at joints F, G, and H. "
+        "Determine the internal force in each member of the truss, specifying its magnitude "
+        "and whether it is in tension or compression. Also report the global support reactions "
+        "at A and B."
     ),
     "units": {
-        "mass_unit": "kg"
+        "force_unit": "kN",
+        "length_unit": "m"
     },
     "variables": {
-        "max_tension": {"type": "float", "default": 30.0, "min": 20.0, "max": 60.0, "step": 5.0, "format": ".1f"},
-        "max_compression": {"type": "float", "default": 50.0, "min": 30.0, "max": 90.0, "step": 5.0, "format": ".1f"}
+        "P": {"type": "float", "default": 500.0, "min": 100.0, "max": 5000.0, "step": 100.0, "format": ".1f"},
+        "L": {"type": "symbolic"}
     },
+
+    # 3. Construct the explicit LLM schema dynamically
     "expected_llm_output": {
         "type": "object",
         "properties": {
-            "max_allowable_mass": {
-                "type": "number",
-                "description": "The maximum mass in kg."
+            "global_reactions": {
+                "type": "object",
+                "description": "Global support reactions.",
+                "properties": {
+                    "R_A_x": {"type": "number"},
+                    "R_A_y": {"type": "number"},
+                    "R_B_y": {"type": "number"}
+                },
+                "required": ["R_A_x", "R_A_y", "R_B_y"],
+                "additionalProperties": False
             },
-            "controlling_member": {
-                "type": "string",
-                "description": "The ID of the member that reaches its limit first (e.g., 'AB')."
-            },
-            "controlling_state": {
-                "type": "string",
-                "enum": ["tension", "compression"],
-                "description": "The failure mode of the controlling member."
+            "member_forces": {
+                "type": "object",
+                "description": "Exact forces for every member in the truss.",
+                "properties": {
+                    member: FORCE_PROPERTY_SCHEMA for member in [eid for eid, n1, n2 in connectivity]
+                },
+                "required": [eid for eid, n1, n2 in connectivity],
+                "additionalProperties": False
             },
             "units": {
                 "type": "string",
-                "description": "Units of the mass."
+                "description": "The units of the forces."
             }
         },
-        "required": ["max_allowable_mass", "controlling_member", "controlling_state", "units"],
+        "required": ["global_reactions", "member_forces", "units"],
         "additionalProperties": False
     }
 }
@@ -149,71 +177,62 @@ PROBLEM_SCHEMA = {
 
 def initialize_truss_state(sampled_vars, nodes, elements_list, loads, supports):
     """
-    BESPOKE SETUP: Leaves 'm' as a pure symbol for the statics engine.
-    Attaches sampled limits to the state object for the extractor.
+    BESPOKE SETUP: Inject dynamic numerical values into symbolic loads/geometry.
+    Deliberately leaves L as a purely symbolic variable for the statics engine.
     """
+    P_val = sampled_vars['P']
+    P_sym = sp.Symbol('P')
+
     evaluated_nodes = {}
     for nid, (x, y) in nodes.items():
         evaluated_nodes[nid] = (sp.sympify(x), sp.sympify(y))
 
     evaluated_loads = {}
     for nid, (fx, fy) in loads.items():
-        evaluated_loads[nid] = (sp.sympify(fx), sp.sympify(fy))
+        eval_fx = sp.sympify(fx).subs({P_sym: P_val})
+        eval_fy = sp.sympify(fy).subs({P_sym: P_val})
+        evaluated_loads[nid] = (eval_fx, eval_fy)
 
     state = TrussState(evaluated_nodes, elements_list, supports, evaluated_loads)
-    
-    # Attach the randomly sampled limits to the state so the extractor can evaluate failure
-    state.sampled_vars = sampled_vars
     return state
 
 
 def extract_solution(state, problem_schema):
     """
-    BESPOKE EXTRACTION: Inverse Optimization Problem.
-    Solves for the critical mass 'm' that causes the first member to fail.
+    BESPOKE EXTRACTION: Target exactly what the problem schema requests.
+    Builds a dictionary of both global reactions and member forces.
     """
-    # 1. Retrieve limits and convert from kN to N (since gravity is 9.81 m/s^2)
-    limit_T_N = state.sampled_vars['max_tension'] * 1000
-    limit_C_N = state.sampled_vars['max_compression'] * 1000
+    member_forces = {}
 
-    m_sym = sp.Symbol('m', positive=True)
+    for eid, expr in state.known_forces.items():
+        val = float(expr.simplify().evalf()) if hasattr(expr, 'simplify') else float(expr)
 
-    # 2. Extract numerical coefficients for m
-    coeffs = {}
-    for eid, force_expr in state.known_forces.items():
-        if hasattr(force_expr, 'simplify'):
-            # Substitute m=1 to find the multiplier for the mass
-            val = float(force_expr.subs(m_sym, 1).evalf())
+        # Strip floating point noise
+        if abs(val) < 1e-9:
+            magnitude = 0.0
+            status = "zero"
+        elif val > 0:
+            magnitude = val
+            status = "tension"
         else:
-            val = float(force_expr)
-            
-        if abs(val) > 1e-9:
-            coeffs[eid] = val
+            magnitude = abs(val)
+            status = "compression"
 
-    if not coeffs:
-        raise ValueError("No internal forces found.")
+        member_forces[eid] = {
+            "magnitude": magnitude,
+            "state": status
+        }
 
-    # 3. Locate the members carrying the most extreme forces
-    t_eid = max(coeffs, key=coeffs.get)
-    c_eid = min(coeffs, key=coeffs.get)
-
-    max_t_coeff = coeffs[t_eid] if coeffs[t_eid] > 0 else 0.0
-    max_c_coeff = abs(coeffs[c_eid]) if coeffs[c_eid] < 0 else 0.0
-
-    # 4. Calculate allowable mass for both failure modes
-    m_tension = (limit_T_N / max_t_coeff) if max_t_coeff > 0 else float('inf')
-    m_comp = (limit_C_N / max_c_coeff) if max_c_coeff > 0 else float('inf')
-
-    # 5. The lowest mass is the bottleneck (controlling limit)
-    controlling_m = min(m_tension, m_comp)
-    controlling_state = "tension" if m_tension < m_comp else "compression"
-    controlling_member = t_eid if m_tension < m_comp else c_eid
+    reactions = {
+        "R_A_x": float(state.global_reactions.get("R_A_x", 0.0)),
+        "R_A_y": float(state.global_reactions.get("R_A_y", 0.0)),
+        "R_B_y": float(state.global_reactions.get("R_B_y", 0.0)),
+    }
 
     return {
-        "max_allowable_mass": round(controlling_m, 2),
-        "controlling_member": controlling_member,
-        "controlling_state": controlling_state,
-        "units": problem_schema["units"]["mass_unit"]
+        "global_reactions": reactions,
+        "member_forces": member_forces,
+        "units": problem_schema["units"]["force_unit"]
     }
 
 
@@ -247,10 +266,10 @@ SOLUTION_RECIPE = {
 # DRAWING VARIABLES
 #############################################################
 
-# We provide a dummy 'm' strictly for the drawing engine 
-# so it can compute float coordinate lengths for the load vectors.
+# Specific numerical values used exclusively to render the static schematic.
 DRAWING_VARIABLES = {
-    "m": 100.0 
+    "P": PROBLEM_SCHEMA["variables"]["P"].get("default"),
+    "L": 10.0
 }
 
 #############################################################
@@ -258,10 +277,9 @@ DRAWING_VARIABLES = {
 #############################################################
 
 if __name__ == "__main__":
-    # 1. Extract limit values dynamically for the solver
+    # 1. Extract values dynamically for the solver
     solver_vars = {
-        "max_tension": PROBLEM_SCHEMA["variables"]["max_tension"].get("default"),
-        "max_compression": PROBLEM_SCHEMA["variables"]["max_compression"].get("default")
+        "P": PROBLEM_SCHEMA["variables"]["P"].get("default")
     }
     
     print(f"--- Testing Programmatic Solution ---")

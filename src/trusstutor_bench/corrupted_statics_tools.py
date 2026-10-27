@@ -1,43 +1,41 @@
 import sympy as sp
-from trusstutor_bench.math_helpers import get_unit_vector, are_collinear, get_node_difficulty_score
-from trusstutor_bench.statics_tools import solve_single_joint_tool, identify_zfms_by_inspection_tool
+from trusstutor_bench.math_helpers import get_unit_vector
+from trusstutor_bench.statics_tools import identify_zfms_by_inspection_tool
 
 
 def corrupted_solve_global_reactions_tool(state):
     """
-    CORRUPTED VERSION: Introduces a classic Right-Hand Rule sign error in the moment equation.
+    Same as solve_global_reactions_tool, but the external moment has the wrong sign,
+    simulating a right-hand-rule mistake.
+
+    Args:
+        state (TrussState): Truss state, updated in place.
     """
     if not state.supports:
-        return 
+        return
 
     sum_fx = 0
     sum_fy = 0
     sum_mz = 0
 
     sorted_supports = sorted(
-        state.supports.keys(), 
-        key=lambda node: len(state.supports[node]), 
+        state.supports.keys(),
+        key=lambda node: len(state.supports[node]),
         reverse=True
     )
     moment_center = sorted_supports[0]
     mx, my = state.nodes[moment_center]
     unknowns = []
 
-    # 1. Apply external loads
     for node_id, (fx, fy) in state.loads.items():
         sum_fx += fx
         sum_fy += fy
         nx, ny = state.nodes[node_id]
-        
-        # =====================================================================
-        # INTENTIONAL ERROR: 
-        # The correct 2D cross product is: += (nx - mx) * fy - (ny - my) * fx
-        # We negate the entire external moment to simulate a global right-hand rule 
-        # convention mistake where the student reversed their clockwise/CCW signs.
-        # =====================================================================
+
+        # INTENTIONAL ERROR: the external moment is negated (the correct sign is
+        # += (nx - mx) * fy - (ny - my) * fx).
         sum_mz -= ((nx - mx) * fy - (ny - my) * fx)
 
-    # 2. Apply unknown support reactions
     for node_id, directions in state.supports.items():
         nx, ny = state.nodes[node_id]
         for direction in directions:
@@ -52,10 +50,9 @@ def corrupted_solve_global_reactions_tool(state):
                 sum_fy += R_var
                 sum_mz += (nx - mx) * R_var
 
-    # 3. Solve the rigid-body system
     if len(unknowns) > 3:
         raise ValueError(f"Truss is globally statically indeterminate: {len(unknowns)} unknowns.")
-    
+
     active_equations = []
     for eq in [sum_fx, sum_fy, sum_mz]:
         clean_eq = sp.nsimplify(eq, tolerance=1e-9, rational=True)
@@ -68,14 +65,13 @@ def corrupted_solve_global_reactions_tool(state):
 
     solution_vals = list(solution)[0]
 
-    # 4. Mutate the State and Log the Trace
     results = {}
     for var, val in zip(unknowns, solution_vals):
         simplified_val = sp.simplify(val)
         state.global_reactions[var.name] = simplified_val
         results[var.name] = simplified_val
 
-    # The student *thinks* they did it right, so the explanation remains confident!
+    # The explanation stays confident, like a student who did not notice the error.
     state.log_step(
         step_type="Global Statics",
         target="Entire Truss",
@@ -86,24 +82,30 @@ def corrupted_solve_global_reactions_tool(state):
 
 def corrupted_solve_single_joint_tool(state, node_id):
     """
-    CORRUPTED VERSION: If the joint has more equations than unknowns (e.g., the final "check" joint), 
-    it ignores the contradiction caused by bad reactions and forces a solution anyway, 
-    simulating a student who doesn't verify their final equations close to zero.
+    Same as solve_single_joint_tool, but an overdetermined joint is solved from one equation,
+    ignoring the contradiction, like a student who does not check the last equations.
+
+    Args:
+        state (TrussState): Truss state, updated in place.
+        node_id: Joint to solve.
+
+    Returns:
+        bool: True if the joint was solved, False otherwise.
     """
     if node_id in state.supports:
         for dof in state.supports[node_id]:
             reaction_key = f"R_{node_id}_{dof}"
             if reaction_key not in state.global_reactions:
-                return False 
+                return False
 
     connected_elements = [el for el in state.elements if node_id in el['nodes']]
     unknown_elements = [el for el in connected_elements if el['id'] in state.active_element_ids]
     known_elements = [el for el in connected_elements if el['id'] not in state.active_element_ids]
-    
+
     num_unknowns = len(unknown_elements)
     if num_unknowns == 0 or num_unknowns > 2:
         return False
-        
+
     sum_fx, sum_fy = 0, 0
 
     if node_id in state.loads:
@@ -137,14 +139,9 @@ def corrupted_solve_single_joint_tool(state, node_id):
         if clean_eq != 0:
             active_equations.append(clean_eq)
 
-    # =====================================================================
-    # INTENTIONAL ERROR: 
-    # If the system is overdetermined due to bad reactions, a student will 
-    # just solve one equation and ignore the contradiction.
-    # =====================================================================
+    # INTENTIONAL ERROR: with more equations than unknowns, solve one equation and ignore the contradiction.
     solution = None
     if len(active_equations) > num_unknowns:
-        # Try solving with just the first equation
         for eq in active_equations:
             sol = sp.linsolve([eq], unknown_vars)
             if sol:
@@ -176,12 +173,18 @@ def corrupted_solve_single_joint_tool(state, node_id):
 
 def corrupted_autonomous_moj_macro(state, include_collinear_load_rule=False):
     """
-    CORRUPTED VERSION: Orchestrates Method of Joints but calls the corrupted global 
-    reactions tool and the corrupted single joint tool to bypass contradictions.
+    Same as autonomous_moj_macro, but using the corrupted reactions and joint tools.
+
+    Args:
+        state (TrussState): Truss state, updated in place.
+        include_collinear_load_rule (bool): Whether to apply rule 3 (collinear load at a joint).
+
+    Returns:
+        bool: True if every member was solved.
     """
     for nid, (fx, fy) in state.loads.items():
         state.loads[nid] = (
-            sp.nsimplify(fx, rational=True), 
+            sp.nsimplify(fx, rational=True),
             sp.nsimplify(fy, rational=True)
         )
 
@@ -197,9 +200,7 @@ def corrupted_autonomous_moj_macro(state, include_collinear_load_rule=False):
     while made_progress and state.active_element_ids:
         made_progress = False
         for node_id in sorted(state.nodes.keys(), key=str):
-            # =====================================================================
-            # INTENTIONAL ERROR: Call the corrupted joint tool
-            # =====================================================================
+            # INTENTIONAL ERROR: uses the corrupted joint tool.
             if corrupted_solve_single_joint_tool(state, node_id):
                 made_progress = True
                 identify_zfms_by_inspection_tool(state, include_collinear_load_rule)
@@ -210,32 +211,34 @@ def corrupted_autonomous_moj_macro(state, include_collinear_load_rule=False):
 
 def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
     """
-    CORRUPTED VERSION: Executes the Method of Sections perfectly, but flips the 
-    sign of the final answers to simulate a late-stage Tension/Compression mix-up.
+    Same as solve_method_of_sections_tool, but the signs of the answers are flipped,
+    simulating a tension/compression mix-up.
+
+    Args:
+        state (TrussState): Truss state, updated in place.
+        cut_element_ids (list): IDs of the members the cut passes through.
+
+    Returns:
+        bool: True if solved, False if the cut is invalid or unsolvable.
     """
-    # Clean loads for moment arms calculations
     for nid, (fx, fy) in state.loads.items():
         state.loads[nid] = (sp.nsimplify(fx, rational=True), sp.nsimplify(fy, rational=True))
-        
-    # Also ensure node coordinates are exact for lever arm calculations
+
     state.nodes = {
-        nid: (sp.nsimplify(x, rational=True), sp.nsimplify(y, rational=True)) 
+        nid: (sp.nsimplify(x, rational=True), sp.nsimplify(y, rational=True))
         for nid, (x, y) in state.nodes.items()
     }
-    # 1. Verify we are not trying to solve too many unknowns
     unknown_cut_ids = [eid for eid in cut_element_ids if eid in state.active_element_ids]
     if len(unknown_cut_ids) == 0 or len(unknown_cut_ids) > 3:
         return False
-        
-    # 2. Build a graph to find the two separated sub-trusses
+
     adjacency = {node: [] for node in state.nodes}
     for el in state.elements:
         if el['id'] not in cut_element_ids:
             n1, n2 = el['nodes']
             adjacency[n1].append(n2)
             adjacency[n2].append(n1)
-            
-    # Find connected components using Breadth-First Search
+
     visited = set()
     components = []
     for node in state.nodes:
@@ -249,12 +252,10 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
                     visited.add(curr)
                     queue.extend([n for n in adjacency[curr] if n not in visited])
             components.append(comp)
-            
-    # A textbook Method of Sections cut must divide the truss into exactly two bodies
+
     if len(components) != 2:
         return False
-        
-    # 3. Choose the solvable sub-truss
+
     def is_sub_truss_solvable(nodes):
         for node in nodes:
             if node in state.supports:
@@ -273,12 +274,10 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
     sum_fx = 0
     sum_fy = 0
     sum_mz = 0
-    
-    # Pick an arbitrary node in the sub-truss for the moment center
-    moment_center = list(sub_truss_nodes)[0] 
+
+    moment_center = list(sub_truss_nodes)[0]
     mx, my = state.nodes[moment_center]
 
-    # 4. Apply external loads acting on the chosen sub-truss
     for node in sub_truss_nodes:
         if node in state.loads:
             fx, fy = state.loads[node]
@@ -287,7 +286,6 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
             nx, ny = state.nodes[node]
             sum_mz += (nx - mx) * fy - (ny - my) * fx
 
-    # 5. Apply known global reactions acting on the chosen sub-truss
     for node in sub_truss_nodes:
         if f"R_{node}_x" in state.global_reactions:
             rx = state.global_reactions[f"R_{node}_x"]
@@ -300,34 +298,32 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
             nx, ny = state.nodes[node]
             sum_mz += (nx - mx) * ry
 
-    # 6. Apply the severed cut forces
     unknown_vars = []
     for eid in cut_element_ids:
         el = next(e for e in state.elements if e['id'] == eid)
         n1, n2 = el['nodes']
-        
+
         if n1 in sub_truss_nodes and n2 not in sub_truss_nodes:
             local_node, target_node = n1, n2
         elif n2 in sub_truss_nodes and n1 not in sub_truss_nodes:
             local_node, target_node = n2, n1
         else:
             return False
-            
+
         c, s = get_unit_vector(local_node, el, state.nodes)
         nx, ny = state.nodes[local_node]
-        
+
         if eid in state.known_forces:
             force_val = state.known_forces[eid]
         else:
             var_name = f"F_{eid}"
             force_val = sp.Symbol(var_name)
             unknown_vars.append(force_val)
-            
+
         sum_fx += force_val * c
         sum_fy += force_val * s
         sum_mz += (nx - mx) * (force_val * s) - (ny - my) * (force_val * c)
 
-    # 7. Solve the 3-equation system
     active_eqs = []
     for eq in [sum_fx, sum_fy, sum_mz]:
         clean_eq = sp.nsimplify(eq, tolerance=1e-9, rational=True)
@@ -341,16 +337,11 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
 
     solution_vals = list(solution)[0]
 
-    # 8. Mutate State and Log
     results = {}
     for eid, val in zip(unknown_cut_ids, solution_vals):
-        # =====================================================================
-        # INTENTIONAL ERROR: 
-        # Flip the sign of the calculated value to simulate the student 
-        # mixing up the definition of Tension vs. Compression at the end.
-        # =====================================================================
+        # INTENTIONAL ERROR: the sign of the answer is flipped.
         simplified_val = -sp.simplify(val)
-        
+
         state.known_forces[eid] = simplified_val
         state.active_element_ids.remove(eid)
         results[eid] = simplified_val
@@ -364,5 +355,5 @@ def corrupted_solve_method_of_sections_tool(state, cut_element_ids):
         results=results,
         explanation=f"Evaluated FBD of sub-truss nodes {sorted(list(sub_truss_nodes))} using Sum Fx, Sum Fy, and Sum Mz."
     )
-    
+
     return True

@@ -63,23 +63,15 @@ class MockTrussState:
 
 
 def test_corrupted_solve_global_reactions_tool_sign_error():
-    """
-    Verifies that the corrupted global reactions tool correctly injects a 
-    Right-Hand Rule sign error into the moment equation while maintaining 
-    the appearance of a flawless solve.
-    """
+    """The corrupted reactions tool uses the wrong moment sign but still looks like a flawless solve."""
     state = MockTrussState()
     
     # Execute the corrupted solver
     corrupted_solve_global_reactions_tool(state)
     
-    # 1. Verify the math was corrupted.
-    # The correct physical reaction at B should be +50.0 to counteract the clockwise moment.
-    # Because of the corrupted cross product, it will calculate as -50.0.
     assert "R_B_y" in state.global_reactions
     assert float(state.global_reactions["R_B_y"]) == -50.0
     
-    # 2. Verify the trace still looks completely normal to fool the LLM.
     assert len(state.trace) == 1
     assert state.trace[0]["step_type"] == "Global Statics"
     assert "Entire Truss" in state.trace[0]["target"]
@@ -89,10 +81,7 @@ def test_corrupted_solve_global_reactions_tool_sign_error():
 @patch("trusstutor_bench.corrupted_statics_tools.corrupted_solve_global_reactions_tool")
 @patch("trusstutor_bench.corrupted_statics_tools.identify_zfms_by_inspection_tool")
 def test_corrupted_autonomous_moj_macro(mock_zfm, mock_corrupted_reactions):
-    """
-    Verifies that the corrupted macro specifically routes the execution path 
-    through the faulty global reactions tool.
-    """
+    """The corrupted macro runs through the corrupted global reactions tool."""
     state = MockTrussState()
     
     # Clear active elements to prevent the un-mocked joint solvers from looping
@@ -105,13 +94,18 @@ def test_corrupted_autonomous_moj_macro(mock_zfm, mock_corrupted_reactions):
 
 
 def load_real_task(benchmark_id: str = "example_TRUSS_0001"):
-    """Helper to dynamically load a real benchmark task from the examples directory."""
+    """
+    Loads a task from the tasks folder, or skips the test if the file is missing.
+
+    Args:
+        benchmark_id (str): Task file name without .py.
+
+    Returns:
+        BenchmarkTask: The loaded task.
+    """
     current_dir = Path(__file__).parent
     
-    # Try to find the examples directory (handles different possible pytest execution roots)
-    examples_dir = current_dir / "examples"
-    if not examples_dir.exists():
-        examples_dir = current_dir.parent / "examples"
+    examples_dir = current_dir.parent / "tasks"
         
     example_path = examples_dir / f"{benchmark_id}.py"
     
@@ -126,41 +120,27 @@ def load_real_task(benchmark_id: str = "example_TRUSS_0001"):
 
 
 def test_corrupted_global_reactions_real_example():
-    """
-    Loads TRUSS_0001, applies both the clean and corrupted global reactions 
-    tools to identical states, and verifies that the calculated physics diverge.
-    """
+    """On TRUSS_0001, the clean and corrupted reactions tools give different results."""
     task = load_real_task("example_TRUSS_0001")
     
-    # 1. Initialize the raw TrussState using the template's creator step
     sampled_vars = sample_variables(task.problem_schema["variables"])
     init_step = task.solution_recipe[1]
     base_state = init_step["function"](sampled_vars=sampled_vars, **init_step["inputs"])
     
-    # 2. Create two identical, independent copies of the state
     clean_state = copy.deepcopy(base_state)
     corrupted_state = copy.deepcopy(base_state)
     
-    # 3. Execute the respective tools
     solve_global_reactions_tool(clean_state)
     corrupted_solve_global_reactions_tool(corrupted_state)
     
-    # 4. Assert that the mathematical outputs are fundamentally different 
-    # (proving the Right-Hand Rule error successfully altered the physics)
     assert clean_state.global_reactions != corrupted_state.global_reactions
     
-    # 5. Assert that the corrupted trace still appended the "Global Statics" log step
-    # so the LLM has something to read.
     assert len(corrupted_state.trace) > 0
     assert corrupted_state.trace[-1]["step_type"] == "Global Statics"
 
 
 def test_corrupted_autonomous_moj_macro_real_example():
-    """
-    Loads TRUSS_0001 and verifies that running the corrupted MOJ macro 
-    successfully completes the internal force evaluations while carrying 
-    forward the flawed global reactions.
-    """
+    """On TRUSS_0001, the corrupted macro still solves every member, carrying the flawed reactions forward."""
     task = load_real_task("example_TRUSS_0001")
     
     sampled_vars = sample_variables(task.problem_schema["variables"])
@@ -170,24 +150,17 @@ def test_corrupted_autonomous_moj_macro_real_example():
     clean_state = copy.deepcopy(base_state)
     corrupted_state = copy.deepcopy(base_state)
     
-    # 1. Execute the full macros
     autonomous_moj_macro(clean_state)
     corrupted_autonomous_moj_macro(corrupted_state)
     
-    # 2. Verify that both macros successfully solved all active elements
     assert len(clean_state.active_element_ids) == 0
     assert len(corrupted_state.active_element_ids) == 0
     
-    # 3. Verify that the internal forces diverged because the corrupted macro 
-    # fed flawed support reactions into the subsequent joint evaluations.
     assert clean_state.known_forces != corrupted_state.known_forces
 
 
 class OverdeterminedMockState:
-    """
-    A lightweight mock state specifically designed with a physical contradiction 
-    to test the overdetermined safety check bypass.
-    """
+    """Mock state whose equations contradict each other, for the overdetermined joint check."""
     def __init__(self):
         self.nodes = {
             "A": (0, 0), 
@@ -223,30 +196,18 @@ class OverdeterminedMockState:
 
 
 def test_corrupted_solve_single_joint_tool_forces_solution():
-    """
-    Verifies that the corrupted joint tool bypasses the mathematical safety 
-    check for overdetermined systems and forces a solution using the first 
-    available equation, simulating a student ignoring a math contradiction.
-    """
+    """The corrupted joint tool solves an overdetermined joint from one equation and ignores the contradiction."""
     base_state = OverdeterminedMockState()
     
     clean_state = copy.deepcopy(base_state)
     corrupted_state = copy.deepcopy(base_state)
     
-    # 1. Execute the Clean Tool
-    # The standard solver should detect that the system has 1 unknown (AB) 
-    # but 2 active equations that contradict each other. It should safely 
-    # abort and return False.
     clean_result = solve_single_joint_tool(clean_state, "A")
     
     assert clean_result is False
     assert "AB" in clean_state.active_element_ids
     assert "AB" not in clean_state.known_forces
     
-    # 2. Execute the Corrupted Tool
-    # The corrupted solver should ignore the contradiction in the Y-direction, 
-    # force a solution using the X-direction equation (10 + F_AB = 0), and 
-    # confidently return True.
     corrupted_result = corrupted_solve_single_joint_tool(corrupted_state, "A")
     
     assert corrupted_result is True
@@ -260,23 +221,15 @@ def test_corrupted_solve_single_joint_tool_forces_solution():
 
 
 def test_corrupted_single_joint_tool_real_example():
-    """
-    Loads TRUSS_0001, injects flawed support reactions, and verifies that the 
-    corrupted single joint tool forces a solution on the final overdetermined 
-    'check' joint where the clean tool correctly identifies a contradiction and halts.
-    """
+    """On TRUSS_0001 with flawed reactions, the corrupted joint tool forces a solution at the final check joint, where the clean tool detects the contradiction."""
     task = load_real_task("example_TRUSS_0001")
     
-    # 1. Initialize the raw TrussState
     sampled_vars = sample_variables(task.problem_schema["variables"])
     init_step = task.solution_recipe[1]
     base_state = init_step["function"](sampled_vars=sampled_vars, **init_step["inputs"])
     
-    # 2. Inject flawed global reactions
-    # This guarantees that the final joint equations will contradict each other.
     corrupted_solve_global_reactions_tool(base_state)
     
-    # 3. Run the standard (clean) joint solver loop until it stalls out
     made_progress = True
     while made_progress and base_state.active_element_ids:
         made_progress = False
@@ -288,7 +241,6 @@ def test_corrupted_single_joint_tool_real_example():
     # Verify the clean solver actually got stuck due to the contradiction
     assert len(base_state.active_element_ids) > 0
     
-    # 4. Find the node where the solver stalled (the "check" joint)
     stuck_node = None
     for node_id in base_state.nodes:
         unknowns = [
@@ -301,23 +253,22 @@ def test_corrupted_single_joint_tool_real_example():
             
     assert stuck_node is not None, "Could not find an overdetermined node to test."
     
-    # 5. Create two identical copies of this stalled state
     clean_state = copy.deepcopy(base_state)
     corrupted_state = copy.deepcopy(base_state)
     
-    # 6. Prove the clean tool STILL refuses to solve it
     assert solve_single_joint_tool(clean_state, stuck_node) is False
     assert len(clean_state.active_element_ids) == len(base_state.active_element_ids)
     
-    # 7. Prove the corrupted tool successfully forces a solution
     assert corrupted_solve_single_joint_tool(corrupted_state, stuck_node) is True
     assert len(corrupted_state.active_element_ids) < len(clean_state.active_element_ids)
 
 
 def create_mock_truss_state():
     """
-    Helper function to generate a fresh, simple 2-panel truss state 
-    with predefined global reactions so Method of Sections can immediately run.
+    Builds a two-panel truss state with known reactions, so a method-of-sections cut can run immediately.
+
+    Returns:
+        TrussState: The state.
     """
     nodes = {
         "0": (0, 0),
@@ -358,27 +309,20 @@ def create_mock_truss_state():
 
 
 def test_corrupted_solve_method_of_sections_tc_flip():
-    """
-    Verifies that the corrupted Method of Sections tool perfectly executes 
-    the matrix math but flips the sign of the final internal forces to 
-    simulate a student misinterpreting Tension/Compression.
-    """
+    """The corrupted sections tool does the matrix math correctly but flips the sign of the member forces."""
     # A standard cut through the middle of the 2-panel truss
     cut_elements = ['top', 'diag3', 'bot2']
     
-    # 1. Run the Authentic Tool (Ground Truth)
     clean_state = create_mock_truss_state()
     success_clean = solve_method_of_sections_tool(clean_state, cut_elements)
     
     assert success_clean is True, "Authentic tool failed to solve the cut."
     
-    # 2. Run the Corrupted Tool
     corrupt_state = create_mock_truss_state()
     success_corrupt = corrupted_solve_method_of_sections_tool(corrupt_state, cut_elements)
     
     assert success_corrupt is True, "Corrupted tool failed to solve the cut."
     
-    # 3. Assert the Error Injection (The Tension/Compression Flip)
     for eid in cut_elements:
         clean_force = clean_state.known_forces[eid]
         corrupt_force = corrupt_state.known_forces[eid]
@@ -391,32 +335,27 @@ def test_corrupted_solve_method_of_sections_tc_flip():
             f"Failed on member {eid}: Expected { -clean_force }, got { corrupt_force }"
         )
         
-    # 4. Verify the trace logged confidently (student thinks they did it right)
     assert len(corrupt_state.trace) == 1
     assert corrupt_state.trace[0]["step_type"] == "Method of Sections"
 
 
-def test_corrupted_mos_with_truss_0003():
-    """
-    Validates the Tension/Compression flip explicitly using the real TRUSS_0003 template.
-    """
-    # 1. Dynamically load the TRUSS_0003 template
+def test_corrupted_mos_with_truss_0002():
+    """On TRUSS_0002, the corrupted sections tool returns exactly the negative of the clean forces."""
     current_dir = Path(__file__).parent
-    examples_dir = current_dir / "examples"
-    example_path = examples_dir / "example_TRUSS_0003.py"
+    examples_dir = current_dir.parent / "tasks"
+    example_path = examples_dir / "example_TRUSS_0002.py"
 
     if not example_path.exists():
-        pytest.skip("example_TRUSS_0003.py not found in examples directory.")
+        pytest.skip("example_TRUSS_0002.py not found in examples directory.")
 
-    spec = importlib.util.spec_from_file_location("example_TRUSS_0003", example_path)
+    spec = importlib.util.spec_from_file_location("example_TRUSS_0002", example_path)
     truss_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(truss_module)
 
-    # 2. Extract the recipe and default variables
     recipe = truss_module.SOLUTION_RECIPE
     schema = truss_module.PROBLEM_SCHEMA
     
-    # Grab the default numeric values (P1=60.0, P2=80.0, theta=20.0)
+    # Grab the default numeric values (P=50.0)
     sampled_vars = {k: v.get("default") for k, v in schema["variables"].items() if "default" in v}
 
     # Helper function to generate a state prepared up to Step 2
@@ -431,22 +370,18 @@ def test_corrupted_mos_with_truss_0003():
         
         return state
 
-    # 3. Create two identical, prepared states
     clean_state = get_prepared_state()
     corrupt_state = get_prepared_state()
 
-    # The target cut elements for TRUSS_0003: ["D", "E", "F"]
+    # The target cut elements for TRUSS_0002: ["CE", "CF", "DF"]
     cut_elements = recipe[3]["inputs"]["cut_element_ids"]
 
-    # 4. Run Authentic Tool
     success_clean = solve_method_of_sections_tool(clean_state, cut_elements)
-    assert success_clean is True, "Authentic TRUSS_0003 MoS tool failed."
+    assert success_clean is True, "Authentic TRUSS_0002 MoS tool failed."
 
-    # 5. Run Corrupted Tool
     success_corrupt = corrupted_solve_method_of_sections_tool(corrupt_state, cut_elements)
-    assert success_corrupt is True, "Corrupted TRUSS_0003 MoS tool failed."
+    assert success_corrupt is True, "Corrupted TRUSS_0002 MoS tool failed."
 
-    # 6. Assert the Error Injection (The Tension/Compression Flip)
     for eid in cut_elements:
         clean_force = clean_state.known_forces[eid]
         corrupt_force = corrupt_state.known_forces[eid]
@@ -458,5 +393,4 @@ def test_corrupted_mos_with_truss_0003():
             f"Failed on member {eid}: Expected { -clean_force }, got { corrupt_force }"
         )
 
-    # 7. Verify the trace logged confidently at the last step
     assert corrupt_state.trace[-1]["step_type"] == "Method of Sections"

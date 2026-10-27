@@ -3,7 +3,7 @@ import numpy as np
 import os
 import sympy as sp
 
-# trusstutor_support_code tools
+# trusstutor_bench tools
 from trusstutor_bench.truss_state import TrussState
 from trusstutor_bench.statics_tools import (
     autonomous_moj_macro,
@@ -32,7 +32,7 @@ METADATA = {
     "task_creator": "elejeune11",
     "source_type": "original",
     "source_name": "github test example",
-    "source_problem_pointer": ["can include a url here, can include chapter and problem number"],
+    "source_problem_pointer": [""],
 }
 
 #############################################################

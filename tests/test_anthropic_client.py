@@ -1,9 +1,26 @@
 from llm_api.run_anthropic_client import build_claude_request, build_claude_request_formative
+from llm_api.run_anthropic_client import CLAUDE_MAX_TOKENS, CLAUDE_THINKING_EFFORT
 from pathlib import Path
 import json
 from types import SimpleNamespace
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from llm_api.run_anthropic_client import run_anthropic, run_anthropic_formative
+
+
+class FakeMessageStream:
+    """Fakes the async-context-manager shape of client.messages.stream(...)."""
+
+    def __init__(self, final_message):
+        self._final_message = final_message
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get_final_message(self):
+        return self._final_message
 
 payload_dict = {
     "benchmark_id": "TRUSS_0001",
@@ -70,14 +87,16 @@ formative_payload_dict = {
 
 
 def test_build_claude_request():
+    """Builds the baseline request with the model, token limit, adaptive thinking, messages and schema."""
 
     llm_model = "claude-opus-5"
     output_dict = build_claude_request(llm_model,payload_dict)
 
     assert isinstance(output_dict, dict)
-    assert len(output_dict) == 4
+    assert len(output_dict) == 5
     assert output_dict["model"] == "claude-opus-5"
-    assert output_dict["max_tokens"] == 20000
+    assert output_dict["max_tokens"] == CLAUDE_MAX_TOKENS
+    assert output_dict["thinking"] == {"type": "adaptive"}
     assert output_dict["messages"][0]["role"] == "user"
     assert output_dict["messages"][0]["content"][0]["type"] == "text"
     assert output_dict["messages"][0]["content"][0]["text"] == payload_dict["user_prompt"]
@@ -85,10 +104,11 @@ def test_build_claude_request():
     assert output_dict["messages"][0]["content"][1]["source"]["type"] == "base64"
     assert output_dict["messages"][0]["content"][1]["source"]["media_type"] == "image/png"
     assert output_dict["messages"][0]["content"][1]["source"]["data"] == payload_dict["image_base64"]
-    assert output_dict["output_config"] == {"format": {"type": "json_schema", "schema": cleaned_schema}}
+    assert output_dict["output_config"] == {"effort": CLAUDE_THINKING_EFFORT, "format": {"type": "json_schema", "schema": cleaned_schema}}
 
 
 async def test_run_anthropic(tmp_path):
+    """Returns the parsed JSON answer with token usage from a baseline call."""
 
     json_file = tmp_path / "claude_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -102,7 +122,7 @@ async def test_run_anthropic(tmp_path):
 
     with patch("llm_api.run_anthropic_client.AsyncAnthropic") as mock_client:
 
-        mock_client.return_value.messages.create = AsyncMock(return_value=fake_response)
+        mock_client.return_value.messages.stream = MagicMock(return_value=FakeMessageStream(fake_response))
 
         response = await run_anthropic(llm_model, json_file)
 
@@ -113,16 +133,43 @@ async def test_run_anthropic(tmp_path):
         "_usage": {"tokens": 42, "stop_reason": "end_turn"}
     }
 
+
+async def test_run_anthropic_raises_on_missing_text_block(tmp_path):
+    """Raises RuntimeError when the response has a thinking block but no text block."""
+
+    json_file = tmp_path / "claude_request.json"
+    json_file.write_text(json.dumps(payload_dict))
+
+    fake_thinking_block = SimpleNamespace(type = "thinking", thinking = "reasoning about the truss...")
+    fake_usage = SimpleNamespace(output_tokens = 20000)
+    fake_response = SimpleNamespace(content = [fake_thinking_block], usage = fake_usage, stop_reason = "max_tokens")
+
+    llm_model = "claude-opus-5"
+
+    with patch("llm_api.run_anthropic_client.AsyncAnthropic") as mock_client:
+
+        mock_client.return_value.messages.stream = MagicMock(return_value=FakeMessageStream(fake_response))
+
+        try:
+            await run_anthropic(llm_model, json_file)
+            assert False, "expected RuntimeError"
+        except RuntimeError as e:
+            assert "max_tokens" in str(e)
+            assert "thinking" in str(e)
+
+
 def test_build_claude_request_formative():
+    """Builds the formative request with the system prompt, the interleaved student work and the schema."""
 
     llm_model = "claude-opus-5"
     output_dict = build_claude_request_formative(llm_model,formative_payload_dict)
 
     assert isinstance(output_dict, dict)
     assert output_dict["system"] == formative_payload_dict["system_prompt"]
-    assert len(output_dict) == 5
+    assert len(output_dict) == 6
     assert output_dict["model"] == "claude-opus-5"
-    assert output_dict["max_tokens"] == 20000
+    assert output_dict["max_tokens"] == CLAUDE_MAX_TOKENS
+    assert output_dict["thinking"] == {"type": "adaptive"}
     assert output_dict["messages"][0]["role"] == "user"
     assert output_dict["messages"][0]["content"][1]["type"] == "text"
     assert output_dict["messages"][0]["content"][1]["text"] == formative_payload_dict["student_work"][0]["content"]
@@ -130,7 +177,7 @@ def test_build_claude_request_formative():
     assert output_dict["messages"][0]["content"][0]["source"]["type"] == "base64"
     assert output_dict["messages"][0]["content"][0]["source"]["media_type"] == "image/png"
     assert output_dict["messages"][0]["content"][0]["source"]["data"] == formative_payload_dict["base_image_base64"]
-    assert output_dict["output_config"] == {"format": {"type": "json_schema", "schema": cleaned_schema}}
+    assert output_dict["output_config"] == {"effort": CLAUDE_THINKING_EFFORT, "format": {"type": "json_schema", "schema": cleaned_schema}}
     assert output_dict["messages"][0]["content"][2]["type"] == "image"
     assert output_dict["messages"][0]["content"][2]["source"]["type"] == "base64"
     assert output_dict["messages"][0]["content"][2]["source"]["media_type"] == "image/png"
@@ -140,6 +187,7 @@ def test_build_claude_request_formative():
 
 
 async def test_run_anthropic_formative(tmp_path):
+    """Returns the parsed JSON answer with token usage from a formative call."""
 
     json_file = tmp_path / "claude_formative_request.json"
     json_file.write_text(json.dumps(formative_payload_dict))
@@ -153,7 +201,7 @@ async def test_run_anthropic_formative(tmp_path):
 
     with patch("llm_api.run_anthropic_client.AsyncAnthropic") as mock_client:
 
-        mock_client.return_value.messages.create = AsyncMock(return_value=fake_response)
+        mock_client.return_value.messages.stream = MagicMock(return_value=FakeMessageStream(fake_response))
 
         response = await run_anthropic_formative(llm_model, json_file)
 
@@ -163,3 +211,16 @@ async def test_run_anthropic_formative(tmp_path):
         "text2": "value2",
         "_usage": {"tokens": 42, "stop_reason": "end_turn"}
     }
+
+def test_constants_are_used_for_every_model(monkeypatch):
+    """Every Claude model gets the same max_tokens and effort constants."""
+    monkeypatch.setattr("llm_api.run_anthropic_client.CLAUDE_MAX_TOKENS", 1234)
+    monkeypatch.setattr("llm_api.run_anthropic_client.CLAUDE_THINKING_EFFORT", "low")
+
+    for llm_model in ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"]:
+        for output_dict in [
+            build_claude_request(llm_model, payload_dict),
+            build_claude_request_formative(llm_model, formative_payload_dict),
+        ]:
+            assert output_dict["max_tokens"] == 1234
+            assert output_dict["output_config"]["effort"] == "low"

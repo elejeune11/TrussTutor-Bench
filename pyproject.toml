@@ -1,9 +1,10 @@
 [project]
 name = "trusstutor_bench"
 version = "0.1.0"
-description = "Add your description here"
+description = "Evaluation pipeline for LLMs on 2D truss statics problems"
 readme = "README.md"
 authors = [
+    { name = "eapostolakis99", email = "232458696+eapostolakis99@users.noreply.github.com" },
     { name = "elejeune11", email = "52667645+elejeune11@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"

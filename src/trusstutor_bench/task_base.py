@@ -5,8 +5,7 @@ from typing import Any, Dict, List
 @dataclass(frozen=True)
 class BenchmarkTask:
     """
-    A pure, immutable data transfer object (DTO) representing a single Truss problem template.
-    Contains zero execution logic.
+    An immutable record of one truss problem template, with no execution logic.
     """
     benchmark_id: str
     metadata: Dict[str, Any]
@@ -22,8 +21,13 @@ class BenchmarkTask:
     @classmethod
     def from_module(cls, template_module: Any) -> 'BenchmarkTask':
         """
-        Factory method to safely extract attributes from an imported Python module.
-        Uses getattr with defaults for safety on optional physical parameters.
+        Builds a BenchmarkTask from an imported task module. Optional parts default to empty.
+
+        Args:
+            template_module: Imported task module.
+
+        Returns:
+            BenchmarkTask: The task record.
         """
         return cls(
             benchmark_id=template_module.METADATA.get("benchmark_id", "UNKNOWN_ID"),

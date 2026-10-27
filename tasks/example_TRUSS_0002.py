@@ -3,7 +3,7 @@ import numpy as np
 import os
 import sympy as sp
 
-# trusstutor_support_code tools
+# trusstutor_bench tools
 from trusstutor_bench.truss_state import TrussState
 from trusstutor_bench.statics_tools import (
     autonomous_moj_macro,
@@ -29,12 +29,12 @@ from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
 
 METADATA = {
     "benchmark_id": "TRUSS_0002",
-    "topic": ["method_of_joints"],
+    "topic": ["method_of_sections"],
     "DEFAULT_RANDOM_SEED": 11,
     "task_creator": "elejeune11",
-    "source_type": "textbook",
-    "source_name": "Engineering Mechanics: Statics, Osgood et al.",
-    "source_problem_pointer": ["https://pressbooks.library.upei.ca/statics/chapter/method-of-joints/"],
+    "source_type": "original",
+    "source_name": "elejeune11 handwritten",
+    "source_problem_pointer": [""],
 }
 
 #############################################################
@@ -42,23 +42,25 @@ METADATA = {
 #############################################################
 
 L = sp.Symbol('L', positive=True)
-P1 = sp.Symbol('P1')
-P2 = sp.Symbol('P2')
+P = sp.Symbol('P')
 
-SYMBOLIC_DEFINITIONS = [L, P1, P2]
+SYMBOLIC_DEFINITIONS = [L, P]
 
 #############################################################
 # NODES
 #############################################################
 
 NODES = {
-    "A": (0, 0),
-    "B": (sp.Rational(1, 2) * L, sp.Rational(1, 2) * sp.sqrt(3) * L),
-    "C": (sp.Rational(3, 2) * L, sp.Rational(1, 2) * sp.sqrt(3) * L),
-    "D": (sp.Rational(5, 2) * L, sp.Rational(1, 2) * sp.sqrt(3) * L),
-    "E": (3 * L, 0),
-    "F": (2 * L, 0),
-    "G": (L, 0),
+    "A": (0, 9 * L / 2),
+    "B": (3 * L / 2, 9 * L / 2),
+    "C": (0, 7 * L / 2),
+    "D": (3 * L / 2, 7 * L / 2),
+    "E": (0, 5 * L / 2),
+    "F": (3 * L / 2, 5 * L / 2),
+    "G": (0, 3 * L / 2),
+    "H": (3 * L / 2, 3 * L / 2),
+    "I": (0, 0),
+    "J": (3 * L / 2, 0),
 }
 
 #############################################################
@@ -68,17 +70,23 @@ NODES = {
 DEFAULT_PROPS = {'E': 1.0, 'A': 1.0}
 
 connectivity = [
-    ("AB", "A", "B"),
-    ("BC", "B", "C"),
-    ("CD", "C", "D"),
-    ("DE", "D", "E"),
-    ("EF", "E", "F"),
-    ("FG", "F", "G"),
-    ("AG", "A", "G"),
-    ("BG", "B", "G"),
-    ("CG", "C", "G"),
-    ("CF", "C", "F"),
-    ("DF", "D", "F")
+    ('AB', 'A', 'B'),
+    ('AC', 'A', 'C'),
+    ('BC', 'B', 'C'),
+    ('BD', 'B', 'D'),
+    ('CD', 'C', 'D'),
+    ('CE', 'C', 'E'),
+    ('CF', 'C', 'F'),
+    ('DF', 'D', 'F'),
+    ('EF', 'E', 'F'),
+    ('EG', 'E', 'G'),
+    ('FG', 'F', 'G'),
+    ('FH', 'F', 'H'),
+    ('GH', 'G', 'H'),
+    ('GI', 'G', 'I'),
+    ('GJ', 'G', 'J'),
+    ('HJ', 'H', 'J'),
+    ('IJ', 'I', 'J')
 ]
 
 ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in connectivity]
@@ -88,8 +96,7 @@ ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in c
 #############################################################
 
 LOADS = {
-    "G": (0, -P1),
-    "F": (0, -P2)
+    "B": (-P, 0)
 }
 
 #############################################################
@@ -97,30 +104,24 @@ LOADS = {
 #############################################################
 
 SUPPORTS = {
-    "A": ['x', 'y'],
-    "E": ['y']
+    "I": ['x', 'y'],
+    "J": ['y']
 }
 
 #############################################################
 # PROBLEM STATEMENT
 #############################################################
 
-
 PROBLEM_SCHEMA = {
     "template": (
-        "A statically determinate truss is supported by a pin at a "
-        "and a roller at e. Vertical downward loads of {P1} {force_unit} "
-        "and {P2} {force_unit} are applied at joints g and f, respectively. "
-        "If the bay length is L, determine the internal force in each member "
-        "of the structure, specifying its magnitude and whether it is in tension or compression."
+        "If P = {P} {force_unit}, what is the force in members CE, CF, and DF?"
     ),
     "units": {
         "force_unit": "kN",
         "length_unit": "m"
     },
     "variables": {
-        "P1": {"type": "float", "default": 100.0, "min": 50.0, "max": 500.0, "step": 10.0, "format": ".1f"},
-        "P2": {"type": "float", "default": 50.0, "min": 25.0, "max": 250.0, "step": 5.0, "format": ".1f"},
+        "P": {"type": "float", "default": 50.0, "min": 20.0, "max": 100.0, "step": 10.0, "format": ".1f"},
         "L_val": {"type": "symbolic"}
     },
     
@@ -130,11 +131,11 @@ PROBLEM_SCHEMA = {
         "properties": {
             "member_forces": {
                 "type": "object",
-                "description": "Exact forces for every member in the truss.",
+                "description": "Exact forces for the requested members.",
                 "properties": {
-                    member: FORCE_PROPERTY_SCHEMA for member in [eid for eid, n1, n2 in connectivity]
+                    member: FORCE_PROPERTY_SCHEMA for member in ["CE", "CF", "DF"]
                 },
-                "required": [eid for eid, n1, n2 in connectivity],
+                "required": ["CE", "CF", "DF"],
                 "additionalProperties": False
             },
             "units": {
@@ -147,19 +148,18 @@ PROBLEM_SCHEMA = {
     }
 }
 
+
 #############################################################
 # PROGRAMMATIC PROBLEM SOLUTION
 #############################################################
 
 def initialize_truss_state(sampled_vars, nodes, elements_list, loads, supports):
     """
-    BESPOKE SETUP: Inject dynamic numerical values into symbolic loads/geometry.
-    Deliberately leaves L as a purely symbolic variable for the statics engine.
+    BESPOKE SETUP: Inject dynamic numerical values into symbolic loads.
     """
-    P1_val = sampled_vars['P1']
-    P2_val = sampled_vars['P2']
-    P1_sym = sp.Symbol('P1')
-    P2_sym = sp.Symbol('P2')
+    subs_dict = {
+        'P': sampled_vars['P'],
+    }
 
     evaluated_nodes = {}
     for nid, (x, y) in nodes.items():
@@ -167,23 +167,27 @@ def initialize_truss_state(sampled_vars, nodes, elements_list, loads, supports):
 
     evaluated_loads = {}
     for nid, (fx, fy) in loads.items():
-        eval_fx = sp.sympify(fx).subs({P1_sym: P1_val, P2_sym: P2_val})
-        eval_fy = sp.sympify(fy).subs({P1_sym: P1_val, P2_sym: P2_val})
-        evaluated_loads[nid] = (eval_fx, eval_fy)
+        evaluated_loads[nid] = (
+            sp.sympify(fx).subs(subs_dict),
+            sp.sympify(fy).subs(subs_dict)
+        )
 
     state = TrussState(evaluated_nodes, elements_list, supports, evaluated_loads)
     return state
 
 
-def extract_solution(state, problem_schema):
+def extract_solution(state, problem_schema, target_elements):
     """
     BESPOKE EXTRACTION: Target exactly what the problem schema requests.
-    Builds a dictionary of member forces with explicit magnitude and state.
+    Only pulls data for the requested Method of Sections target elements.
     """
     member_forces = {}
     
-    for eid, expr in state.known_forces.items():
-        val = float(expr.simplify().evalf())
+    for eid in target_elements:
+        if eid not in state.known_forces:
+            raise ValueError(f"Force for member '{eid}' was not resolved by the solver.")
+            
+        val = float(state.known_forces[eid].simplify().evalf())
         
         # Strip floating point noise
         if abs(val) < 1e-9:
@@ -222,13 +226,16 @@ SOLUTION_RECIPE = {
         "inputs": {}
     },
     3: {
-        "function": autonomous_moj_macro,
-        "inputs": {}
+        "function": solve_method_of_sections_tool,
+        "inputs": {
+            "cut_element_ids": ["CE", "CF", "DF"]
+        }
     },
     4: {
         "function": extract_solution,
         "inputs": {
-            "problem_schema": PROBLEM_SCHEMA
+            "problem_schema": PROBLEM_SCHEMA,
+            "target_elements": ["CE", "CF", "DF"]
         }
     }
 }
@@ -239,8 +246,7 @@ SOLUTION_RECIPE = {
 
 # Specific numerical values used exclusively to render the static schematic.
 DRAWING_VARIABLES = {
-    "P1": PROBLEM_SCHEMA["variables"]["P1"].get("default"),
-    "P2": PROBLEM_SCHEMA["variables"]["P2"].get("default"),
+    "P": PROBLEM_SCHEMA["variables"]["P"].get("default"),
     "L": 10.0
 }
 
@@ -251,8 +257,7 @@ DRAWING_VARIABLES = {
 if __name__ == "__main__":
     # 1. Extract values dynamically for the solver
     solver_vars = {
-        "P1": PROBLEM_SCHEMA["variables"]["P1"].get("default"),
-        "P2": PROBLEM_SCHEMA["variables"]["P2"].get("default")
+        "P": PROBLEM_SCHEMA["variables"]["P"].get("default"),
     }
     
     print(f"--- Testing Programmatic Solution ---")

@@ -3,19 +3,19 @@ import numpy as np
 import os
 import sympy as sp
 
-# trusstutor_support_code tools
+# trusstutor_bench tools
 from trusstutor_bench.truss_state import TrussState
+from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
 from trusstutor_bench.statics_tools import (
     autonomous_moj_macro,
     identify_zfms_by_inspection_tool,
     solve_method_of_sections_tool,
     solve_single_joint_tool,
     solve_global_reactions_tool,
-    programmatic_solution
+    programmatic_solution,
+    find_controlling_members
 )
 from trusstutor_bench.draw_truss import draw_truss_adapter
-from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
-
 
 #############################################################
 # PROBLEM DEFINITION TEMPLATE
@@ -29,37 +29,43 @@ from trusstutor_bench.schemas import FORCE_PROPERTY_SCHEMA
 
 METADATA = {
     "benchmark_id": "TRUSS_0003",
-    "topic": ["method_of_sections"],
+    "topic": ["find_unknown_load_or_dimension"],
     "DEFAULT_RANDOM_SEED": 11,
-    "task_creator": "elejeune11",
-    "source_type": "textbook",
-    "source_name": "Engineering Mechanics: Statics, Osgood et al.",
-    "source_problem_pointer": ["https://pressbooks.library.upei.ca/statics/chapter/method-of-sections/"],
+    "task_creator": "eapostolakis99",
+    "source_type": "original",
+    "source_name": "eapostolakis99 handwritten",
+    "source_problem_pointer": [""],
 }
 
 #############################################################
 # SYMBOLIC DEFINITIONS
 #############################################################
 
-L = sp.Symbol('L', positive=True)
-theta = sp.Symbol('theta', real=True)
-P1 = sp.Symbol('P1')
-P2 = sp.Symbol('P2')
+P = sp.Symbol("P", positive=True)
 
-SYMBOLIC_DEFINITIONS = [L, theta, P1, P2]
+SYMBOLIC_DEFINITIONS = [P]
 
 #############################################################
 # NODES
 #############################################################
 
+# Maintain pure SymPy exactness to prevent floating point drift
+
 NODES = {
-    "0": (0, 0),
-    "1": (L, 0),
-    "2": (2 * L, 0),
-    "3": (3 * L, 0),
-    # Use float value here so the coordinates are resolved correctly
-    "4": (2 * L, -L * np.tan(20 * np.pi / 180)),
-    "5": (L, -L * np.tan(20 * np.pi / 180))
+    "A": (0, 0),
+    "B": (5, sp.Rational(5, 2)),
+    "C": (5, 0),
+    "D": (10, 6),
+    "E": (10, sp.Rational(5, 2)),
+    "F": (10, 0),
+    "G": (15, 6),
+    "H": (15, 0),
+    "I": (20, 6),
+    "J": (20, sp.Rational(5, 2)),
+    "K": (20, 0),
+    "L": (25, sp.Rational(5, 2)),
+    "M": (25, 0),
+    "N": (30, 0)
 }
 
 #############################################################
@@ -69,15 +75,31 @@ NODES = {
 DEFAULT_PROPS = {'E': 1.0, 'A': 1.0}
 
 connectivity = [
-    ('A', '0', '1'),
-    ('B', '0', '5'),
-    ('C', '1', '5'),
-    ('D', '1', '2'),
-    ('E', '1', '4'),
-    ('F', '4', '5'),
-    ('G', '2', '4'),
-    ('H', '2', '3'),
-    ('I', '3', '4')
+    ('AB', 'A', 'B'),
+    ('AC', 'A', 'C'),
+    ('BD', 'B', 'D'),
+    ('BC', 'B', 'C'),
+    ('BE', 'B', 'E'),
+    ('CF', 'C', 'F'),
+    ('DG', 'D', 'G'),
+    ('DE', 'D', 'E'),
+    ('EG', 'E', 'G'),
+    ('EH', 'E', 'H'),
+    ('EF', 'E', 'F'),
+    ('FH', 'F', 'H'),
+    ('GH', 'G', 'H'),
+    ('GJ', 'G', 'J'),
+    ('GI', 'G', 'I'),
+    ('HJ', 'H', 'J'),
+    ('HK', 'H', 'K'),
+    ('IJ', 'I', 'J'),
+    ('IL', 'I', 'L'),
+    ('JK', 'J', 'K'),
+    ('JL', 'J', 'L'),
+    ('KM', 'K', 'M'),
+    ('LM', 'L', 'M'),
+    ('LN', 'L', 'N'),
+    ('MN', 'M', 'N')
 ]
 
 ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in connectivity]
@@ -87,8 +109,9 @@ ELEMENTS = [{'id': eid, 'nodes': (n1, n2), **DEFAULT_PROPS} for eid, n1, n2 in c
 #############################################################
 
 LOADS = {
-    "1": (0, -P1),
-    "2": (0, -P2)
+    "C": (0, -P),
+    "F": (0, -P),
+    "H": (0, -P)
 }
 
 #############################################################
@@ -96,8 +119,8 @@ LOADS = {
 #############################################################
 
 SUPPORTS = {
-    "0": ['x', 'y'],
-    "3": ['y']
+    "A": ['x', 'y'],
+    "N": ['y']  
 }
 
 #############################################################
@@ -106,47 +129,50 @@ SUPPORTS = {
 
 PROBLEM_SCHEMA = {
     "template": (
-        "A statically determinate truss is illustrated in the attached schematic. "
-        "Vertical downward loads of {P1} {force_unit} and {P2} {force_unit} are applied at joints. "
-        "The top chord has bay lengths of L, and the bottom chord slopes downward "
-        "at an angle of {theta} degrees relative to the horizontal. "
-        "Determine the internal forces in members D, E, and F. "
-        "Specify the magnitude and whether each member is in tension or compression."
+        "Determine the maximum force P which may be applied to the truss without "
+        "exceeding {max_tension} kN in tension or {max_compression} kN in compression in any member."
+        "Identify the maximum allowable force, the critical member(s) that govern this limit "
+        "(list every member that reaches the limit at that load, in case of a tie), "
+        "and whether they are in tension or compression."
     ),
     "units": {
-        "force_unit": "kN",
-        "length_unit": "m"
+        "force_unit": "kN"
     },
     "variables": {
-        "P1": {"type": "float", "default": 60.0, "min": 20.0, "max": 100.0, "step": 10.0, "format": ".1f"},
-        "P2": {"type": "float", "default": 80.0, "min": 20.0, "max": 100.0, "step": 10.0, "format": ".1f"},
-        "theta": {"type": "float", "default": 20.0, "min": 10.0, "max": 45.0, "step": 5.0, "format": ".1f"},
-        "L_val": {"type": "symbolic"}
+        "max_tension": {"type": "float", "default": 300.0, "min": 200.0, "max": 600.0, "step": 5.0, "format": ".1f"},
+        "max_compression": {"type": "float", "default": 500.0, "min": 300.0, "max": 900.0, "step": 5.0, "format": ".1f"}
     },
-    
-    # 3. Construct the explicit LLM schema dynamically
     "expected_llm_output": {
         "type": "object",
         "properties": {
-            "member_forces": {
-                "type": "object",
-                "description": "Exact forces for the requested members.",
-                "properties": {
-                    member: FORCE_PROPERTY_SCHEMA for member in ["D", "E", "F"]
-                },
-                "required": ["D", "E", "F"],
-                "additionalProperties": False
+            "max_allowable_force": {
+                "type": "number",
+                "description": "The maximum force in kN."
+            },
+            "controlling_member": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The ID(s) of the member(s) that reach their limit first "
+                    "(e.g., ['AB']). List every member tied for the governing "
+                    "load, not just one, if more than one reaches the limit "
+                    "at the exact same load."
+                )
+            },
+            "controlling_state": {
+                "type": "string",
+                "enum": ["tension", "compression"],
+                "description": "The failure mode of the controlling member."
             },
             "units": {
                 "type": "string",
-                "description": "The units of the forces."
+                "description": "Units of the force."
             }
         },
-        "required": ["member_forces", "units"],
+        "required": ["max_allowable_force", "controlling_member", "controlling_state", "units"],
         "additionalProperties": False
     }
 }
-
 
 #############################################################
 # PROGRAMMATIC PROBLEM SOLUTION
@@ -154,61 +180,59 @@ PROBLEM_SCHEMA = {
 
 def initialize_truss_state(sampled_vars, nodes, elements_list, loads, supports):
     """
-    BESPOKE SETUP: Inject dynamic numerical values into symbolic loads.
-    Geometry is already resolved using THETA_VAL.
+    BESPOKE SETUP: Leaves 'P' as a pure symbol for the statics engine.
+    Attaches sampled limits to the state object for the extractor.
     """
-    subs_dict = {
-        'P1': sampled_vars['P1'],
-        'P2': sampled_vars['P2']
-    }
-
     evaluated_nodes = {}
     for nid, (x, y) in nodes.items():
-        # Nodes are already floats from THETA_VAL, sympify handles them safely
         evaluated_nodes[nid] = (sp.sympify(x), sp.sympify(y))
 
     evaluated_loads = {}
     for nid, (fx, fy) in loads.items():
-        evaluated_loads[nid] = (
-            sp.sympify(fx).subs(subs_dict),
-            sp.sympify(fy).subs(subs_dict)
-        )
+        evaluated_loads[nid] = (sp.sympify(fx), sp.sympify(fy))
 
     state = TrussState(evaluated_nodes, elements_list, supports, evaluated_loads)
+
+    # Attach the randomly sampled limits to the state so the extractor can evaluate failure
+    state.sampled_vars = sampled_vars
     return state
 
 
-def extract_solution(state, problem_schema, target_elements):
+def extract_solution(state, problem_schema):
     """
-    BESPOKE EXTRACTION: Target exactly what the problem schema requests.
-    Only pulls data for the requested Method of Sections target elements.
+    BESPOKE EXTRACTION: Inverse Optimization Problem.
+    Solves for the critical load 'P' that causes the first member to fail.
     """
-    member_forces = {}
-    
-    for eid in target_elements:
-        if eid not in state.known_forces:
-            raise ValueError(f"Force for member '{eid}' was not resolved by the solver.")
-            
-        val = float(state.known_forces[eid].simplify().evalf())
-        
-        # Strip floating point noise
-        if abs(val) < 1e-9:
-            magnitude = 0.0
-            status = "zero"
-        elif val > 0:
-            magnitude = val
-            status = "tension"
+    # 1. Retrieve limits
+    limit_T_N = state.sampled_vars['max_tension']
+    limit_C_N = state.sampled_vars['max_compression']
+
+    P_sym = sp.Symbol('P', positive=True)
+
+    # 2. Extract numerical coefficients for P
+    coeffs = {}
+    for eid, force_expr in state.known_forces.items():
+        if hasattr(force_expr, 'simplify'):
+            # Substitute P=1 to find the multiplier for the load
+            val = float(force_expr.subs(P_sym, 1).evalf())
         else:
-            magnitude = abs(val)
-            status = "compression"
-            
-        member_forces[eid] = {
-            "magnitude": magnitude,
-            "state": status
-        }
+            val = float(force_expr)
+
+        if abs(val) > 1e-9:
+            coeffs[eid] = val
+
+    if not coeffs:
+        raise ValueError("No internal forces found.")
+
+    # 3. Locate the governing failure mode and every member tied for it
+    controlling_P, controlling_state, controlling_members = find_controlling_members(
+        coeffs, limit_T_N, limit_C_N
+    )
 
     return {
-        "member_forces": member_forces,
+        "max_allowable_force": round(controlling_P, 2),
+        "controlling_member": controlling_members,
+        "controlling_state": controlling_state,
         "units": problem_schema["units"]["force_unit"]
     }
 
@@ -228,16 +252,13 @@ SOLUTION_RECIPE = {
         "inputs": {}
     },
     3: {
-        "function": solve_method_of_sections_tool,
-        "inputs": {
-            "cut_element_ids": ["D", "E", "F"]
-        }
+        "function": autonomous_moj_macro,
+        "inputs": {}
     },
     4: {
         "function": extract_solution,
         "inputs": {
-            "problem_schema": PROBLEM_SCHEMA,
-            "target_elements": ["D", "E", "F"]
+            "problem_schema": PROBLEM_SCHEMA
         }
     }
 }
@@ -246,12 +267,10 @@ SOLUTION_RECIPE = {
 # DRAWING VARIABLES
 #############################################################
 
-# Specific numerical values used exclusively to render the static schematic.
+# We provide a dummy 'P' strictly for the drawing engine
+# so it can compute float coordinate lengths for the load vectors.
 DRAWING_VARIABLES = {
-    "P1": PROBLEM_SCHEMA["variables"]["P1"].get("default"),
-    "P2": PROBLEM_SCHEMA["variables"]["P2"].get("default"),
-    "theta": PROBLEM_SCHEMA["variables"]["theta"].get("default") * np.pi / 180,
-    "L": 10.0
+    "P": 35.0
 }
 
 #############################################################
@@ -259,17 +278,16 @@ DRAWING_VARIABLES = {
 #############################################################
 
 if __name__ == "__main__":
-    # 1. Extract values dynamically for the solver
+    # 1. Extract limit values dynamically for the solver
     solver_vars = {
-        "P1": PROBLEM_SCHEMA["variables"]["P1"].get("default"),
-        "P2": PROBLEM_SCHEMA["variables"]["P2"].get("default"),
-        "theta": PROBLEM_SCHEMA["variables"]["theta"].get("default")
+        "max_tension": PROBLEM_SCHEMA["variables"]["max_tension"].get("default"),
+        "max_compression": PROBLEM_SCHEMA["variables"]["max_compression"].get("default")
     }
-    
+
     print(f"--- Testing Programmatic Solution ---")
     try:
         truth_data = programmatic_solution(
-            solution_recipe=SOLUTION_RECIPE, 
+            solution_recipe=SOLUTION_RECIPE,
             sampled_vars=solver_vars
         )
         import pprint
@@ -278,11 +296,11 @@ if __name__ == "__main__":
         print("\n")
     except Exception as e:
         print(f"Solver Failed: {e}\n")
-    
+
     # 2. Generate schematic using the top-level DRAWING_VARIABLES
     current_dir = os.path.dirname(os.path.abspath(__file__))
     local_save_path = os.path.join(current_dir, "draw_truss")
-    
+
     print(f"--- Testing Schematic Generation ---")
     draw_truss_adapter(
         nodes=NODES,

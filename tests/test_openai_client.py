@@ -72,14 +72,16 @@ formative_payload_dict = {
 
 
 def test_build_openai_request():
+    """Builds the baseline request with the model, token limit, reasoning effort, input and schema."""
 
     llm_model = "gpt-5.1"
     output_dict = build_openai_request(llm_model, payload_dict)
 
     assert isinstance(output_dict, dict)
-    assert len(output_dict) == 4
+    assert len(output_dict) == 5
     assert output_dict["model"] == "gpt-5.1"
     assert output_dict["max_output_tokens"] == 20000
+    assert output_dict["reasoning"] == {"effort": "high"}
     assert output_dict["input"][0]["role"] == "user"
     assert output_dict["input"][0]["content"][0]["type"] == "input_text"
     assert output_dict["input"][0]["content"][0]["text"] == payload_dict["user_prompt"]
@@ -96,6 +98,7 @@ def test_build_openai_request():
 
 
 async def test_run_openai(tmp_path):
+    """Returns the parsed JSON answer with token usage from a baseline call."""
 
     json_file = tmp_path / "openai_request.json"
     json_file.write_text(json.dumps(payload_dict))
@@ -103,7 +106,7 @@ async def test_run_openai(tmp_path):
     fake_reasoning_item = SimpleNamespace(type="reasoning")
     fake_output_text_block = SimpleNamespace(type="output_text", text=json.dumps({"text1": "value1", "text2": "value2"}))
     fake_message_item = SimpleNamespace(type="message", content=[fake_output_text_block])
-    fake_usage = SimpleNamespace(output_tokens=42)
+    fake_usage = SimpleNamespace(output_tokens=42, input_tokens=7)
     fake_response = SimpleNamespace(output=[fake_reasoning_item, fake_message_item], usage=fake_usage, status="completed")
 
     llm_model = "gpt-5.1"
@@ -118,19 +121,21 @@ async def test_run_openai(tmp_path):
     assert response == {
         "text1": "value1",
         "text2": "value2",
-        "_usage": {"tokens": 42, "status": "completed"}
+        "_usage": {"tokens": 42, "input_tokens": 7, "status": "completed"}
     }
 
 def test_build_openai_request_formative():
+    """Builds the formative request with the instructions, the student work and the schema."""
 
     llm_model = "gpt-5.1"
     output_dict = build_openai_request_formative(llm_model, formative_payload_dict)
 
     assert isinstance(output_dict, dict)
     assert output_dict["instructions"] == formative_payload_dict["system_prompt"]
-    assert len(output_dict) == 5
+    assert len(output_dict) == 6
     assert output_dict["model"] == "gpt-5.1"
     assert output_dict["max_output_tokens"] == 20000
+    assert output_dict["reasoning"] == {"effort": "high"}
     assert output_dict["input"][0]["role"] == "user"
     assert output_dict["input"][0]["content"][0]["type"] == "input_image"
     assert output_dict["input"][0]["content"][0]["image_url"] == f"data:image/png;base64,{formative_payload_dict['base_image_base64']}"
@@ -151,6 +156,7 @@ def test_build_openai_request_formative():
 
 
 async def test_run_openai_formative(tmp_path):
+    """Returns the parsed JSON answer with token usage from a formative call."""
 
     json_file = tmp_path / "openai_formative_request.json"
     json_file.write_text(json.dumps(formative_payload_dict))
@@ -158,7 +164,7 @@ async def test_run_openai_formative(tmp_path):
     fake_reasoning_item = SimpleNamespace(type="reasoning")
     fake_output_text_block = SimpleNamespace(type="output_text", text=json.dumps({"text1": "value1", "text2": "value2"}))
     fake_message_item = SimpleNamespace(type="message", content=[fake_output_text_block])
-    fake_usage = SimpleNamespace(output_tokens=42)
+    fake_usage = SimpleNamespace(output_tokens=42, input_tokens=7)
     fake_response = SimpleNamespace(output=[fake_reasoning_item, fake_message_item], usage=fake_usage, status="completed")
 
     llm_model = "gpt-5.1"
@@ -173,11 +179,12 @@ async def test_run_openai_formative(tmp_path):
     assert response == {
         "text1": "value1",
         "text2": "value2",
-        "_usage": {"tokens": 42, "status": "completed"}
+        "_usage": {"tokens": 42, "input_tokens": 7, "status": "completed"}
     }
 
 
 def test_clean_schema_for_openai_nested_object():
+    """Requires every property and forbids extra properties at every nesting level."""
 
     schema = {
         "type": "object",
@@ -206,6 +213,7 @@ def test_clean_schema_for_openai_nested_object():
 
 
 def test_clean_schema_for_openai_required_and_nullable():
+    """Turns nullable into a type union with null and keeps the required list."""
     
     schema = {
         "type": "object",
@@ -225,3 +233,10 @@ def test_clean_schema_for_openai_required_and_nullable():
     assert cleaned["properties"]["error_step_number"]["type"] == ["integer", "null"]
     assert "nullable" not in cleaned["properties"]["error_step_number"]
     assert cleaned["required"] == ["is_work_correct", "error_step_number"]
+
+
+def test_reasoning_effort_constant_is_used(monkeypatch):
+    """Both request builders send the reasoning effort constant."""
+    monkeypatch.setattr("llm_api.run_openai_client.OPENAI_REASONING_EFFORT", "medium")
+    assert build_openai_request_formative("gpt-6-astra", formative_payload_dict)["reasoning"] == {"effort": "medium"}
+    assert build_openai_request("gpt-6-astra", payload_dict)["reasoning"] == {"effort": "medium"}

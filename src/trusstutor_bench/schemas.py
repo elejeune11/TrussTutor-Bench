@@ -3,10 +3,6 @@ Central repository for recurring JSON schema definitions and
 controlled vocabularies used across the benchmark.
 """
 
-# ---------------------------------------------------------
-# LLM OUTPUT SCHEMAS
-# ---------------------------------------------------------
-
 FORCE_PROPERTY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -23,10 +19,6 @@ FORCE_PROPERTY_SCHEMA = {
     "required": ["magnitude", "state"],
     "additionalProperties": False
 }
-
-# ---------------------------------------------------------
-# METADATA CONTROLLED VOCABULARIES
-# ---------------------------------------------------------
 
 ALLOWED_TOPICS = [
     "method_of_joints",

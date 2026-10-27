@@ -3,7 +3,7 @@ import numpy as np
 import os
 import sympy as sp
 
-# trusstutor_support_code tools
+# trusstutor_bench tools
 from trusstutor_bench.truss_state import TrussState
 from trusstutor_bench.statics_tools import (
     identify_zfms_by_inspection_tool,
@@ -28,7 +28,7 @@ METADATA = {
     "task_creator": "elejeune11",
     "source_type": "original",
     "source_name": "github test example",
-    "source_problem_pointer": [],
+    "source_problem_pointer": [""],
 }
 
 #############################################################

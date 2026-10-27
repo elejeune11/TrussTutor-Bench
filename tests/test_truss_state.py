@@ -104,5 +104,3 @@ def test_logging_sympy_types(sample_topology):
     # The result should be safely cast to a string format like "L*P/2"
     assert isinstance(state.trace[0]['results']['bot'], str)
     assert "P" in state.trace[0]['results']['bot']
-
-
